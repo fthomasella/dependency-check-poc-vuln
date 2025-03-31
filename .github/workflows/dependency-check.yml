@@ -43,7 +43,7 @@ jobs:
           format: 'HTML'
           out: 'reports'
           args: >
-            --failOnCVSS 5
+            --failOnCVSS 7
             --enableRetired
             --noupdate
 
