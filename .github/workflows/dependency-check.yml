@@ -25,11 +25,6 @@ jobs:
           java -version
           which java
 
-      - name: Fix JAVA_HOME for Docker
-        run: |
-          echo "JAVA_HOME=/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/11.0.26-4/x64" >> $GITHUB_ENV
-          echo "PATH=/opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/11.0.26-4/x64/bin:$PATH" >> $GITHUB_ENV
-
       - name: Set up Node.js (optional for Node.js projects)
         uses: actions/setup-node@v4
         with:
@@ -40,6 +35,8 @@ jobs:
 
       - name: Run Dependency Check
         uses: dependency-check/Dependency-Check_Action@main
+        env:
+          JAVA_HOME: /opt/jdk  # Redefine JAVA_HOME para o valor esperado pelo contêiner
         with:
           project: 'dependency-check-poc'
           path: '.'
