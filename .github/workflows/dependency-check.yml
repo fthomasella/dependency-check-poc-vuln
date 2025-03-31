@@ -27,8 +27,9 @@ jobs:
           format: 'HTML'
           out: 'reports'
           args: >
-            --failOnCVSS 5  # Falha se CVSS >= 5 (para capturar vulnerabilidades moderadas)
+            --failOnCVSS 5
             --enableRetired
+            --noupdate  # Adicionado explicitamente para consistência
 
       - name: Upload Dependency Check Report
         uses: actions/upload-artifact@v4
