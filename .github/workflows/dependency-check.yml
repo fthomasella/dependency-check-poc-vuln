@@ -46,7 +46,7 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'HTML,JSON'
+          format: 'HTML'
           out: 'reports'
           args: >
             --failOnCVSS 5
