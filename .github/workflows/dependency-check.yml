@@ -1,55 +1,101 @@
-name: Dependency Check PoC
+name: 'Infosec Action'
+description: 'Ação de segurança que verifica vulnerabilidades em dependências'
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up JDK 11
+      uses: actions/setup-java@v4
+      with:
+        java-version: '11'
+        distribution: 'temurin'
 
-on: [push]
+    - name: Set up Node.js (optional for Node.js projects)
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
 
-jobs:
-  dependency-check:
-    runs-on: ubuntu-latest
-    name: Dependency Check Test
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Install npm dependencies (optional)
+      shell: bash
+      run: npm install || echo "Nenhum package.json encontrado"
 
-      - name: List directory contents
-        run: ls -la
+    - name: Run Dependency Check
+      id: depcheck
+      shell: bash
+      env:
+        JAVA_HOME: /opt/jdk
+      uses: dependency-check/Dependency-Check_Action@main
+      with:
+        project: 'infosec-scan'
+        path: '.'
+        format: 'HTML,JSON'
+        out: 'reports/dependency-check'
+        args: >
+          --failOnCVSS 7
+          --enableRetired
+          --noupdate
 
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
-        with:
-          java-version: '11'
-          distribution: 'temurin'
+    - name: Upload Dependency Check Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dependency-check-report
+        path: reports/dependency-check
 
-      - name: Verify Java installation
-        run: |
-          echo "JAVA_HOME is set to: $JAVA_HOME"
-          java -version
-          which java
+    - name: Create Issue if Dependency-Check Fails
+      if: failure() && steps.depcheck.outcome == 'failure'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const reportPath = 'reports/dependency-check/dependency-check-report.json';
+          
+          // Lê o relatório JSON
+          const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+          
+          // Extrai vulnerabilidades com CVSS >= 7
+          const affectedDependencies = report.dependencies
+            .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
+            .map(dep => {
+              const highVulns = dep.vulnerabilities.filter(vuln => 
+                vuln.severity && (vuln.cvssv3?.baseScore >= 7 || vuln.cvssv2?.score >= 7)
+              );
+              if (highVulns.length > 0) {
+                return {
+                  dependency: dep.packages?.[0]?.id || dep.fileName || 'Unknown dependency',
+                  filePath: dep.filePath || 'Not specified',
+                  vulnerabilities: highVulns.map(vuln => ({
+                    name: vuln.name,
+                    severity: vuln.severity,
+                    cvssScore: vuln.cvssv3?.baseScore || vuln.cvssv2?.score,
+                    description: vuln.description || 'No description available'
+                  }))
+                };
+              }
+              return null;
+            })
+            .filter(dep => dep !== null);
 
-      - name: Set up Node.js (optional for Node.js projects)
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
+          if (affectedDependencies.length > 0) {
+            const issueBody = `
+## Dependency-Check Found High/Critical Vulnerabilities
 
-      - name: Install npm dependencies (optional)
-        run: npm install || echo "Nenhum package.json encontrado"
+The following dependencies contain vulnerabilities with CVSS >= 7:
 
-      - name: Run Dependency Check
-        uses: dependency-check/Dependency-Check_Action@main
-        env:
-          JAVA_HOME: /opt/jdk  # Redefine JAVA_HOME para o valor esperado pelo contêiner
-        with:
-          project: 'dependency-check-poc'
-          path: '.'
-          format: 'HTML'
-          out: 'reports'
-          args: >
-            --failOnCVSS 7
-            --enableRetired
-            --noupdate
+${affectedDependencies.map(dep => `
+### Dependency: ${dep.dependency}
+- **File Affected**: ${dep.filePath}
+- **Vulnerabilities**:
+${dep.vulnerabilities.map(vuln => `  - **${vuln.name}** (Severity: ${vuln.severity}, CVSS: ${vuln.cvssScore})\n    Description: ${vuln.description}`).join('\n')}
+`).join('\n')}
 
-      - name: Upload Dependency Check Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dependency-check-report
-          path: ${{ github.workspace }}/reports
+Please address these issues to proceed with the merge. Check the [Dependency-Check report](/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.
+            `;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'High/Critical Vulnerabilities Detected by Dependency-Check',
+              body: issueBody,
+              labels: ['security', 'vulnerability']
+            });
+          }
