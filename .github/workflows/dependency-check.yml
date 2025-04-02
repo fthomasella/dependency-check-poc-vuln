@@ -2,6 +2,11 @@ name: Dependency Check PoC
 
 on: [push]
 
+# Adiciona permissões para o workflow
+permissions:
+  issues: write  # Permissão para criar issues
+  contents: read # Permissão para ler o conteúdo do repositório
+
 jobs:
   dependency-check:
     runs-on: ubuntu-latest
@@ -49,7 +54,7 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'ALL'
+          format: 'ALL'  # Mantém como ALL, já que você configurou assim
           out: 'reports'
           args: >
             --failOnCVSS 7
@@ -58,6 +63,11 @@ jobs:
 
       - name: List reports directory contents
         run: ls -la ${{ github.workspace }}/reports
+
+      - name: Unzip Dependency Check Report
+        run: |
+          unzip -o ${{ github.workspace }}/reports/dependency-check-report.zip -d ${{ github.workspace }}/reports/unzipped
+          ls -la ${{ github.workspace }}/reports/unzipped
 
       - name: Upload Dependency Check Report
         if: always()
@@ -72,7 +82,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
+            const reportPath = '${{ github.workspace }}/reports/unzipped/dependency-check-report.json';
             console.log(`Attempting to read report at: ${reportPath}`);
             if (!fs.existsSync(reportPath)) {
               console.error(`Report file not found at ${reportPath}`);
@@ -84,7 +94,6 @@ jobs:
               .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
               .map(dep => {
                 const vulnDetails = dep.vulnerabilities.map(v => {
-                  // Tenta obter o score de cvssv3 ou cvssv2, considerando baseScore ou score
                   let score = 'Unknown';
                   if (v.cvssv3) {
                     score = v.cvssv3.baseScore !== undefined ? v.cvssv3.baseScore : (v.cvssv3.score !== undefined ? v.cvssv3.score : 'Unknown');
