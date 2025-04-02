@@ -46,10 +46,10 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'HTML'
+          format: 'HTML,JSON'  # Adicionei JSON para facilitar a análise do relatório
           out: 'reports'
           args: >
-            --failOnCVSS 5
+            --failOnCVSS 7  # Ajustei para 7 conforme sua necessidade
             --enableRetired
             --noupdate
 
@@ -59,3 +59,39 @@ jobs:
         with:
           name: dependency-check-report
           path: ${{ github.workspace }}/reports
+
+      - name: Check for vulnerabilities and create issue
+        if: failure()  # Executa apenas se o passo anterior falhar (CVSS >= 7)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
+            const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+
+            // Verifica se há vulnerabilidades no relatório
+            const vulnerabilities = report.dependencies
+              .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
+              .map(dep => ({
+                name: dep.fileName,
+                vulns: dep.vulnerabilities.map(v => `${v.name} (CVSS: ${v.cvssv2 ? v.cvssv2.score : v.cvssv3.score})`)
+              }));
+
+            if (vulnerabilities.length > 0) {
+              const issueBody = `
+                ## Vulnerabilidades Detectadas
+                
+                O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7:
+                
+                ${vulnerabilities.map(v => `- **${v.name}**: ${v.vulns.join(', ')}`).join('\n')}
+                
+                Por favor, revise o relatório completo em anexo e tome as ações necessárias.
+              `;
+
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Vulnerabilidades Críticas Detectadas pelo Dependency-Check',
+                body: issueBody
+              });
+            }
