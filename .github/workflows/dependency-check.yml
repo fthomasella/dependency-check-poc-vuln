@@ -77,7 +77,6 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const path = require('path');
             const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
             console.log(`Attempting to read report at: ${reportPath}`);
             if (!fs.existsSync(reportPath)) {
@@ -87,7 +86,7 @@ jobs:
             const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
 
             const vulnerabilities = report.dependencies
-              .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0 && dep.filePath && dep.packages && dep.packages.length > 0)
+              .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
               .map(dep => {
                 const criticalVulns = dep.vulnerabilities.filter(v => {
                   let score = -1;
@@ -99,25 +98,39 @@ jobs:
                   return score >= 7;
                 });
                 if (criticalVulns.length > 0) {
-                  const relativePath = dep.filePath.replace('/github/workspace/', '');
-                  const packageId = dep.packages[0].id;
-                  const library = packageId.split('/').pop().split('@')[0];
-                  const fullPath = path.join(process.env.GITHUB_WORKSPACE, relativePath);
-                  let lineNumber = null;
-                  let snippet = null;
+                  // Extract library name from packages
+                  let libraryName = 'Unknown';
+                  if (dep.packages && dep.packages.length > 0) {
+                    const packageId = dep.packages[0].id;
+                    libraryName = packageId.split('@')[0].replace('pkg:gem/', '').replace('pkg:npm/', '');
+                  }
+
+                  // Get relative path by removing /github/workspace/
+                  const workspace = '${{ github.workspace }}';
+                  let filePath = dep.filePath;
+                  if (filePath.startsWith(workspace)) {
+                    filePath = filePath.substring(workspace.length);
+                  }
+
+                  // Try to find line number and snippet by reading the file
+                  let lineNumber = 'Unknown';
+                  let snippet = 'Unknown';
                   try {
-                    const fileContent = fs.readFileSync(fullPath, 'utf8');
-                    const lines = fileContent.split('\n');
-                    for (let i = 0; i < lines.length; i++) {
-                      if (lines[i].includes(library)) {
-                        lineNumber = i + 1;
-                        snippet = lines[i].trim();
-                        break;
+                    if (fs.existsSync(dep.filePath)) {
+                      const content = fs.readFileSync(dep.filePath, 'utf8').split('\n');
+                      // Look for the library name in the file, assuming Gemfile format for gems
+                      for (let i = 0; i < content.length; i++) {
+                        if (content[i].includes(libraryName)) {
+                          lineNumber = i + 1;
+                          snippet = content[i].trim();
+                          break;
+                        }
                       }
                     }
                   } catch (error) {
-                    console.log(`Could not read file ${fullPath}: ${error.message}`);
+                    console.error(`Error reading file ${dep.filePath}: ${error}`);
                   }
+
                   const vulnDetails = criticalVulns.map(v => {
                     let score = 'Unknown';
                     if (v.cvssv3 && v.cvssv3.baseScore) {
@@ -127,9 +140,10 @@ jobs:
                     }
                     return `${v.name} (CVSS: ${score})`;
                   });
+
                   return {
-                    filePath: relativePath,
-                    library: library,
+                    filePath: filePath,
+                    libraryName: libraryName,
                     lineNumber: lineNumber,
                     snippet: snippet,
                     vulns: vulnDetails
@@ -145,14 +159,7 @@ jobs:
 
 O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7:
 
-${vulnerabilities.map(v => {
-  let entry = `- Arquivo: ${v.filePath}, Biblioteca: ${v.library}`;
-  if (v.lineNumber) {
-    entry += `, Linha ${v.lineNumber}: '${v.snippet}'`;
-  }
-  entry += ` (vulnerável a ${v.vulns.join(', ')})`;
-  return entry;
-}).join('\n')}
+${vulnerabilities.map(v => `- Arquivo: ${v.filePath}, Biblioteca: ${v.libraryName}, Linha ${v.lineNumber}: '${v.snippet}' (vulnerável a ${v.vulns.join(', ')})`).join('\n')}
 
 Por favor, revise o relatório completo em anexo e tome as ações necessárias.
               `;
