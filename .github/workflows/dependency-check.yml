@@ -77,6 +77,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const path = require('path');
             const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
             console.log(`Attempting to read report at: ${reportPath}`);
             if (!fs.existsSync(reportPath)) {
@@ -86,7 +87,7 @@ jobs:
             const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
 
             const vulnerabilities = report.dependencies
-              .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
+              .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0 && dep.filePath && dep.packages && dep.packages.length > 0)
               .map(dep => {
                 const criticalVulns = dep.vulnerabilities.filter(v => {
                   let score = -1;
@@ -95,43 +96,74 @@ jobs:
                   } else if (v.cvssv2 && v.cvssv2.score && v.cvssv2.score !== -1.0) {
                     score = v.cvssv2.score;
                   }
-              return score >= 7;
-            });
-            if (criticalVulns.length > 0) {
-              const vulnDetails = criticalVulns.map(v => {
-                let score = 'Unknown';
-                if (v.cvssv3 && v.cvssv3.baseScore) {
-                score = v.cvssv3.baseScore;
-            } else if (v.cvssv2 && v.cvssv2.score) {
-              score = v.cvssv2.score;
-            }
-            return `${v.name} (CVSS: ${score})`;
-            });
-            return { name: dep.fileName, vulns: vulnDetails };
-            }
-            return null;
-            })
-            .filter(dep => dep !== null);
+                  return score >= 7;
+                });
+                if (criticalVulns.length > 0) {
+                  const relativePath = dep.filePath.replace('/github/workspace/', '');
+                  const packageId = dep.packages[0].id;
+                  const library = packageId.split('/').pop().split('@')[0];
+                  const fullPath = path.join(process.env.GITHUB_WORKSPACE, relativePath);
+                  let lineNumber = null;
+                  let snippet = null;
+                  try {
+                    const fileContent = fs.readFileSync(fullPath, 'utf8');
+                    const lines = fileContent.split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                      if (lines[i].includes(library)) {
+                        lineNumber = i + 1;
+                        snippet = lines[i].trim();
+                        break;
+                      }
+                    }
+                  } catch (error) {
+                    console.log(`Could not read file ${fullPath}: ${error.message}`);
+                  }
+                  const vulnDetails = criticalVulns.map(v => {
+                    let score = 'Unknown';
+                    if (v.cvssv3 && v.cvssv3.baseScore) {
+                      score = v.cvssv3.baseScore;
+                    } else if (v.cvssv2 && v.cvssv2.score) {
+                      score = v.cvssv2.score;
+                    }
+                    return `${v.name} (CVSS: ${score})`;
+                  });
+                  return {
+                    filePath: relativePath,
+                    library: library,
+                    lineNumber: lineNumber,
+                    snippet: snippet,
+                    vulns: vulnDetails
+                  };
+                }
+                return null;
+              })
+              .filter(dep => dep !== null);
 
             if (vulnerabilities.length > 0) {
               const issueBody = `
-                ## Vulnerabilidades Detectadas
+## Vulnerabilidades Detectadas
 
-                O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7:
+O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7:
 
-                ${vulnerabilities.map(v => `- **${v.name}**: ${v.vulns.join(', ')}`).join('\n')}
+${vulnerabilities.map(v => {
+  let entry = `- Arquivo: ${v.filePath}, Biblioteca: ${v.library}`;
+  if (v.lineNumber) {
+    entry += `, Linha ${v.lineNumber}: '${v.snippet}'`;
+  }
+  entry += ` (vulnerável a ${v.vulns.join(', ')})`;
+  return entry;
+}).join('\n')}
 
-            Por favor, revise o relatório completo em anexo e tome as ações necessárias.
-            `;
+Por favor, revise o relatório completo em anexo e tome as ações necessárias.
+              `;
 
-            await github.rest.issues.create({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            title: 'Vulnerabilidades Críticas Detectadas pelo Dependency-Check',
-            body: issueBody,
-            assignees: [context.actor]
-            });
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Vulnerabilidades Críticas Detectadas pelo Dependency-Check',
+                body: issueBody,
+                assignees: [context.actor]
+              });
             } else {
-            console.log('No vulnerabilities with CVSS >= 7 found.');
+              console.log('No vulnerabilities with CVSS >= 7 found.');
             }
-
