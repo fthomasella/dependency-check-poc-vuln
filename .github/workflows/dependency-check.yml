@@ -98,27 +98,21 @@ jobs:
                   return score >= 7;
                 });
                 if (criticalVulns.length > 0) {
-                  // Extract library name from packages
                   let libraryName = 'Unknown';
                   if (dep.packages && dep.packages.length > 0) {
                     const packageId = dep.packages[0].id;
                     libraryName = packageId.split('@')[0].replace('pkg:gem/', '').replace('pkg:npm/', '');
                   }
-
-                  // Get relative path by removing /github/workspace/
                   const workspace = '${{ github.workspace }}';
                   let filePath = dep.filePath;
                   if (filePath.startsWith(workspace)) {
-                    filePath = filePath.substring(workspace.length);
+                    filePath = filePath.substring(workspace.length + 1);
                   }
-
-                  // Try to find line number and snippet by reading the file
                   let lineNumber = 'Unknown';
                   let snippet = 'Unknown';
                   try {
                     if (fs.existsSync(dep.filePath)) {
                       const content = fs.readFileSync(dep.filePath, 'utf8').split('\n');
-                      // Look for the library name in the file, assuming Gemfile format for gems
                       for (let i = 0; i < content.length; i++) {
                         if (content[i].includes(libraryName)) {
                           lineNumber = i + 1;
@@ -130,7 +124,6 @@ jobs:
                   } catch (error) {
                     console.error(`Error reading file ${dep.filePath}: ${error}`);
                   }
-
                   const vulnDetails = criticalVulns.map(v => {
                     let score = 'Unknown';
                     if (v.cvssv3 && v.cvssv3.baseScore) {
@@ -140,7 +133,6 @@ jobs:
                     }
                     return `${v.name} (CVSS: ${score})`;
                   });
-
                   return {
                     filePath: filePath,
                     libraryName: libraryName,
@@ -163,7 +155,6 @@ ${vulnerabilities.map(v => `- Arquivo: ${v.filePath}, Biblioteca: ${v.libraryNam
 
 Por favor, revise o relatório completo em anexo e tome as ações necessárias.
               `;
-
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
