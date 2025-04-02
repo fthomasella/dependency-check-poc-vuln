@@ -2,10 +2,9 @@ name: Dependency Check PoC
 
 on: [push]
 
-# Adiciona permissões para o workflow
 permissions:
-  issues: write  # Permissão para criar issues
-  contents: read # Permissão para ler o conteúdo do repositório
+  issues: write
+  contents: read
 
 jobs:
   dependency-check:
@@ -54,7 +53,7 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'ALL'  # Mantém como ALL, já que você configurou assim
+          format: 'ALL'
           out: 'reports'
           args: >
             --failOnCVSS 7
@@ -62,12 +61,8 @@ jobs:
             --noupdate
 
       - name: List reports directory contents
+        if: always()  # Executa mesmo se o Dependency-Check falhar
         run: ls -la ${{ github.workspace }}/reports
-
-      - name: Unzip Dependency Check Report
-        run: |
-          unzip -o ${{ github.workspace }}/reports/dependency-check-report.zip -d ${{ github.workspace }}/reports/unzipped
-          ls -la ${{ github.workspace }}/reports/unzipped
 
       - name: Upload Dependency Check Report
         if: always()
@@ -77,12 +72,12 @@ jobs:
           path: ${{ github.workspace }}/reports
 
       - name: Check for vulnerabilities and create issue
-        if: failure()
+        if: always()  # Executa mesmo se o Dependency-Check falhar
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const reportPath = '${{ github.workspace }}/reports/unzipped/dependency-check-report.json';
+            const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
             console.log(`Attempting to read report at: ${reportPath}`);
             if (!fs.existsSync(reportPath)) {
               console.error(`Report file not found at ${reportPath}`);
