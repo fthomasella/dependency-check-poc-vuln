@@ -49,7 +49,7 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'HTML,JSON'
+          format: 'ALL'
           out: 'reports'
           args: >
             --failOnCVSS 7
