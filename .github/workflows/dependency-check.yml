@@ -61,7 +61,7 @@ jobs:
             --noupdate
 
       - name: List reports directory contents
-        if: always()  # Executa mesmo se o Dependency-Check falhar
+        if: always()
         run: ls -la ${{ github.workspace }}/reports
 
       - name: Upload Dependency Check Report
@@ -72,7 +72,7 @@ jobs:
           path: ${{ github.workspace }}/reports
 
       - name: Check for vulnerabilities and create issue
-        if: always()  # Executa mesmo se o Dependency-Check falhar
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
@@ -88,38 +88,28 @@ jobs:
             const vulnerabilities = report.dependencies
               .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
               .map(dep => {
-                const vulnDetails = dep.vulnerabilities.map(v => {
-                  let score = 'Unknown';
-                  if (v.cvssv3) {
-                    score = v.cvssv3.baseScore !== undefined ? v.cvssv3.baseScore : (v.cvssv3.score !== undefined ? v.cvssv3.score : 'Unknown');
-                  } else if (v.cvssv2) {
-                    score = v.cvssv2.baseScore !== undefined ? v.cvssv2.baseScore : (v.cvssv2.score !== undefined && v.cvssv2.score !== -1.0 ? v.cvssv2.score : 'Unknown');
-                  }
-                  return `${v.name} (CVSS: ${score})`;
-                });
-                return {
+                const vulnDetails = dep.vulnerabilities
+                  .map(v => {
+                    let score = 'Unknown';
+                    if (v.cvssv3) {
+                      score = v.cvssv3.baseScore !== undefined ? v.cvssv3.baseScore : (v.cvssv3.score !== undefined ? v.cvssv3.score : 'Unknown');
+                    } else if (v.cvssv2) {
+                      score = v.cvssv2.baseScore !== undefined ? v.cvssv2.baseScore : (v.cvssv2.score !== undefined && v.cvssv2.score !== -1.0 ? v.cvssv2.score : 'Unknown');
+                    }
+                    // Converte para número se possível, ou mantém como 'Unknown'
+                    const numericScore = typeof score === 'number' ? score : (score !== 'Unknown' ? parseFloat(score) : -1);
+                    return numericScore >= 7 ? `${v.name} (CVSS: ${score})` : null;
+                  })
+                  .filter(vuln => vuln !== null); // Remove vulnerabilidades com CVSS < 7
+                return vulnDetails.length > 0 ? {
                   name: dep.fileName,
                   vulns: vulnDetails
-                };
-              });
+                } : null;
+              })
+              .filter(dep => dep !== null); // Remove dependências sem vulnerabilidades críticas
 
             if (vulnerabilities.length > 0) {
               const issueBody = `
                 ## Vulnerabilidades Detectadas
                 
-                O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7:
-                
-                ${vulnerabilities.map(v => `- **${v.name}**: ${v.vulns.join(', ')}`).join('\n')}
-                
-                Por favor, revise o relatório completo em anexo e tome as ações necessárias.
-              `;
-
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: 'Vulnerabilidades Críticas Detectadas pelo Dependency-Check',
-                body: issueBody
-              });
-            } else {
-              console.log('No vulnerabilities with CVSS >= 7 found.');
-            }
+                O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7
