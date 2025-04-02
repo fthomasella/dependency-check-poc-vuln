@@ -49,7 +49,7 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'HTML,JSON'  # Garante que ambos os formatos sejam gerados
+          format: 'ALL'  # Garante que ambos os formatos sejam gerados
           out: 'reports'       # Diretório de saída
           args: >
             --failOnCVSS 7
