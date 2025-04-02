@@ -38,20 +38,26 @@ jobs:
       - name: Install npm dependencies
         run: npm install || echo "Nenhum package.json encontrado"
 
+      - name: Create reports directory
+        run: mkdir -p reports
+
       - name: Run Dependency Check
         uses: dependency-check/Dependency-Check_Action@main
         env:
-          JAVA_HOME: /opt/jdk  # Redefine JAVA_HOME para o valor esperado pelo contêiner
+          JAVA_HOME: /opt/jdk
         id: depcheck
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'HTML,JSON'  # Adicionei JSON para facilitar a análise do relatório
-          out: 'reports'
+          format: 'HTML,JSON'  # Garante que ambos os formatos sejam gerados
+          out: 'reports'       # Diretório de saída
           args: >
-            --failOnCVSS 7  # Ajustei para 7 conforme sua necessidade
+            --failOnCVSS 7
             --enableRetired
             --noupdate
+
+      - name: List reports directory contents
+        run: ls -la ${{ github.workspace }}/reports
 
       - name: Upload Dependency Check Report
         if: always()
@@ -61,15 +67,19 @@ jobs:
           path: ${{ github.workspace }}/reports
 
       - name: Check for vulnerabilities and create issue
-        if: failure()  # Executa apenas se o passo anterior falhar (CVSS >= 7)
+        if: failure()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
+            console.log(`Attempting to read report at: ${reportPath}`);
+            if (!fs.existsSync(reportPath)) {
+              console.error(`Report file not found at ${reportPath}`);
+              return;
+            }
             const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
 
-            // Verifica se há vulnerabilidades no relatório
             const vulnerabilities = report.dependencies
               .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
               .map(dep => ({
