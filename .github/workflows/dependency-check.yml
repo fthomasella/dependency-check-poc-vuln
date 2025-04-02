@@ -151,8 +151,7 @@ jobs:
 
               O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7:
 
-              ${vulnerabilities.map(v => `- Arquivo: ${v.filePath}, Biblioteca: ${v.libraryName}, Linha ${v.lineNumber}: '${v.snippet}' (vulnerável a ${v.vulns.join(', ')})`).join('\n')}
-
+              ${vulnerabilities.map(v => `Arquivo: ${v.filePath}\n**Biblioteca:** ${v.libraryName}\n${v.vulns.join('\n')}\n\n`).join('\n')}
               Por favor, revise o relatório completo em anexo e tome as ações necessárias.
               `;
               await github.rest.issues.create({
@@ -164,4 +163,4 @@ jobs:
               });
             } else {
               console.log('No vulnerabilities with CVSS >= 7 found.');
-            }
+            } 
