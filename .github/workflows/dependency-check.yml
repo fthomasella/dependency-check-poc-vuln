@@ -49,8 +49,8 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'ALL'  # Garante que ambos os formatos sejam gerados
-          out: 'reports'       # Diretório de saída
+          format: 'HTML,JSON'
+          out: 'reports'
           args: >
             --failOnCVSS 7
             --enableRetired
@@ -82,10 +82,22 @@ jobs:
 
             const vulnerabilities = report.dependencies
               .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
-              .map(dep => ({
-                name: dep.fileName,
-                vulns: dep.vulnerabilities.map(v => `${v.name} (CVSS: ${v.cvssv2 ? v.cvssv2.score : v.cvssv3.score})`)
-              }));
+              .map(dep => {
+                const vulnDetails = dep.vulnerabilities.map(v => {
+                  // Tenta obter o score de cvssv3 ou cvssv2, considerando baseScore ou score
+                  let score = 'Unknown';
+                  if (v.cvssv3) {
+                    score = v.cvssv3.baseScore !== undefined ? v.cvssv3.baseScore : (v.cvssv3.score !== undefined ? v.cvssv3.score : 'Unknown');
+                  } else if (v.cvssv2) {
+                    score = v.cvssv2.baseScore !== undefined ? v.cvssv2.baseScore : (v.cvssv2.score !== undefined && v.cvssv2.score !== -1.0 ? v.cvssv2.score : 'Unknown');
+                  }
+                  return `${v.name} (CVSS: ${score})`;
+                });
+                return {
+                  name: dep.fileName,
+                  vulns: vulnDetails
+                };
+              });
 
             if (vulnerabilities.length > 0) {
               const issueBody = `
@@ -104,4 +116,6 @@ jobs:
                 title: 'Vulnerabilidades Críticas Detectadas pelo Dependency-Check',
                 body: issueBody
               });
+            } else {
+              console.log('No vulnerabilities with CVSS >= 7 found.');
             }
