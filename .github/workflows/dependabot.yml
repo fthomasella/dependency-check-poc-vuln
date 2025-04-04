@@ -3,70 +3,85 @@ name: Dependabot Security Check
 on:
   push:
     branches:
-      - main  # Ajuste para o branch que você quer monitorar.
-
-permissions:
-  security-events: read  # Permissão para ler alertas de segurança
-  issues: write         # Permissão para criar issues
-  contents: read        # Permissão para ler o conteúdo do repositório
+      - main
 
 jobs:
   check-dependabot-alerts:
     runs-on: ubuntu-latest
-
     steps:
-      # Checkout do código do repositório
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Obter informações do commit atual
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
       - name: Get commit details
         id: commit
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          echo "author=$(git log -1 --pretty=format:'%an')" >> $GITHUB_OUTPUT
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          commit_data=$(curl -s -H "Authorization: Bearer $PAT_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/commits/${{ github.sha }}")
+          author_name=$(echo "$commit_data" | jq -r '.commit.author.name')
+          author_username=$(echo "$commit_data" | jq -r '.author.login // ""')
+          echo "author_name=$author_name" >> $GITHUB_OUTPUT
+          echo "author_username=$author_username" >> $GITHUB_OUTPUT
+          echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
 
-      # Buscar alertas abertos do Dependabot via API
+      - name: Check if package.json was modified
+        id: check-files
+        run: |
+          modified_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }})
+          if echo "$modified_files" | grep -q "package.json"; then
+            echo "modified=true" >> $GITHUB_OUTPUT
+          else
+            echo "modified=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Fetch Dependabot alerts
         id: fetch-alerts
+        if: steps.check-files.outputs.modified == 'true'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
-          alerts=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+          alerts=$(curl -s -H "Authorization: Bearer $PAT_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/dependabot/alerts?state=open")
           echo "alerts=$alerts" >> $GITHUB_OUTPUT
-
-      # Verificar se há vulnerabilidades relevantes e criar issue
-      - name: Check vulnerabilities and create issue
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Parse dos alertas (exemplo simples, ajuste conforme necessário)
-          if [ -n "${{ steps.fetch-alerts.outputs.alerts }}" ] && [ "${{ steps.fetch-alerts.outputs.alerts }}" != "[]" ]; then
-            # Extrair informações do alerta (ajuste conforme a estrutura da API)
-            description=$(echo "${{ steps.fetch-alerts.outputs.alerts }}" | jq -r '.[0].security_advisory.description')
-            vuln_id=$(echo "${{ steps.fetch-alerts.outputs.alerts }}" | jq -r '.[0].number')
-            package=$(echo "${{ steps.fetch-alerts.outputs.alerts }}" | jq -r '.[0].dependency.package.name')
-
-            # Verificar se o commit atual ainda contém a vulnerabilidade (lógica simplificada)
-            # Aqui você pode adicionar uma lógica mais robusta, como grep no código
-            echo "Vulnerabilidade encontrada: $package (Alerta #$vuln_id)"
-
-            # Criar a issue
-            curl -s -X POST \
-              -H "Authorization: Bearer $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/issues" \
-              -d '{
-                "title": "Vulnerabilidade Dependabot #'"$vuln_id"' ainda presente no commit de ${{ steps.commit.outputs.author }}",
-                "body": "Descrição do Dependabot:\n\n'"$description"'\n\nAssociada ao commit: ${{ steps.commit.outputs.sha }}\nResponsável: ${{ steps.commit.outputs.author }}",
-                "assignees": ["${{ steps.commit.outputs.author }}"]
-              }'
+          if [ "$alerts" == "[]" ]; then
+            echo "has_alerts=false" >> $GITHUB_OUTPUT
           else
-            echo "Nenhum alerta Dependabot aberto encontrado."
+            echo "has_alerts=true" >> $GITHUB_OUTPUT
           fi
 
-      # Instalar jq para parsing JSON (necessário para processar a resposta da API)
-      - name: Install jq
-        run: sudo apt-get install -y jq
+      - name: Create issue for open alerts
+        if: steps.fetch-alerts.outputs.has_alerts == 'true'
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+        run: |
+          alerts="${{ steps.fetch-alerts.outputs.alerts }}"
+          # Parse the first alert for demonstration
+          description=$(echo "$alerts" | jq -r '.[0].security_advisory.description')
+          vuln_id=$(echo "$alerts" | jq -r '.[0].number')
+          package=$(echo "$alerts" | jq -r '.[0].dependency.package.name')
+
+          echo "Vulnerabilidade encontrada: $package (Alerta #$vuln_id)"
+
+          # Get author details
+          author_name="${{ steps.commit.outputs.author_name }}"
+          author_username="${{ steps.commit.outputs.author_username }}"
+
+          # Build issue data
+          issue_data=$(jq -n \
+            --arg title "Vulnerabilidade Dependabot #$vuln_id ainda presente" \
+            --arg body "Descrição do Dependabot:\n\n$description\n\nAssociada ao commit: ${{ steps.commit.outputs.sha }}\nResponsável: $author_name" \
+            --arg assignee "$author_username" \
+            '{title: $title, body: $body} + (if $assignee != "" then {assignees: [$assignee]} else {} end)')
+
+          # Create the issue
+          curl -s -X POST \
+            -H "Authorization: Bearer $PAT_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues" \
+            -d "$issue_data"
