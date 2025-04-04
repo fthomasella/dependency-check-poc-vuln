@@ -21,69 +21,243 @@ jobs:
         run: |
           #!/bin/bash
           echo "Detecting languages in repository..."
-          # ... (the entire script)
-          # At the end, add:
-          echo "GO_FOUND=$GO_FOUND" >> $GITHUB_OUTPUT
-        id: detect-languages
+
+          # Initialize flags for detected languages
+          JAVA_FOUND=false
+          DOTNET_FOUND=false
+          JS_FOUND=false
+          RUBY_FOUND=false
+          PYTHON_FOUND=false
+          PHP_FOUND=false
+          SWIFT_FOUND=false
+          GO_FOUND=false
+          RUST_FOUND=false
+
+          # Detect languages based on file extensions
+          if ls *.java *.jar *.war *.ear 2>/dev/null || [ -f "pom.xml" ] || [ -f "build.gradle" ]; then
+            JAVA_FOUND=true
+            echo "Java detected"
+          fi
+          if ls *.cs *.csproj *.sln 2>/dev/null; then
+            DOTNET_FOUND=true
+            echo ".NET detected"
+          fi
+          if ls *.js *.ts package.json yarn.lock 2>/dev/null; then
+            JS_FOUND=true
+            echo "JavaScript/TypeScript detected"
+          fi
+          if [ -f "Gemfile" ] || [ -f "Gemfile.lock" ]; then
+            RUBY_FOUND=true
+            echo "Ruby detected"
+          fi
+          if ls *.py requirements.txt  Pipfile.lock 2>/dev/null; then
+            PYTHON_FOUND=true
+            echo "Python detected"
+          fi
+          if ls *.php composer.json composer.lock 2>/dev/null; then
+            PHP_FOUND=true
+            echo "PHP detected"
+          fi
+          if [ -f "Podfile" ] || [ -f "Podfile.lock" ]; then
+            SWIFT_FOUND=true
+            echo "Swift/Objective-C detected"
+          fi
+          if ls *.go go.mod 2>/dev/null; then
+            echo "GO_FOUND=true" >> $GITHUB_ENV
+            echo "Go detected"
+          fi
+          if ls *.rs Cargo.toml 2>/dev/null; then
+            RUST_FOUND=true
+            echo "Rust detected"
+          fi
+
+          # Compile or install dependencies based on detected languages
+          if [ "$JAVA_FOUND" = true ]; then
+            echo "Setting up Java environment..."
+            sudo apt-get update
+            sudo apt-get install -y openjdk-11-jdk
+            if [ -f "pom.xml" ]; then
+              echo "Compiling Java with Maven..."
+              mvn clean install -B
+            elif [ -f "build.gradle" ]; then
+              echo "Compiling Java with Gradle..."
+              chmod +x gradlew
+              ./gradlew build
+            fi
+          fi
+
+          if [ "$DOTNET_FOUND" = true ]; then
+            echo "Setting up .NET environment..."
+            sudo apt-get update
+            sudo apt-get install -y dotnet-sdk-6.0
+            echo "Compiling .NET project..."
+            dotnet build
+          fi
+
+          if [ "$JS_FOUND" = true ]; then
+            echo "Setting up Node.js environment..."
+            curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+            sudo apt-get install -y nodejs
+            if [ -f "package.json" ]; then
+              echo "Installing JavaScript dependencies..."
+              npm install
+            fi
+          fi
+
+          if [ "$RUBY_FOUND" = true ]; then
+            echo "Setting up Ruby environment..."
+            sudo apt-get update
+            sudo apt-get install -y ruby-full
+            if [ -f "Gemfile" ]; then
+              echo "Installing Ruby dependencies..."
+              gem install bundler
+              bundle install
+            fi
+          fi
+
+          if [ "$PYTHON_FOUND" = true ]; then
+            echo "Setting up Python environment..."
+            sudo apt-get update
+            sudo apt-get install -y python3 python3-pip
+            if [ -f "requirements.txt" ]; then
+              echo "Installing Python dependencies..."
+              pip3 install -r requirements.txt
+            elif [ -f "Pipfile.lock" ]; then
+              echo "Installing Python dependencies with pipenv..."
+              pip3 install pipenv
+              pipenv install
+            fi
+          fi
+
+          if [ "$PHP_FOUND" = true ]; then
+            echo "Setting up PHP environment..."
+            sudo apt-get update
+            sudo apt-get install -y php php-cli php-mbstring php-xml
+            if [ -f " composer.json" ]; then
+              echo "Installing PHP dependencies..."
+              curl -sS https://getcomposer.org/installer | php
+              php composer.phar install
+            fi
+          fi
+
+          if [ "$SWIFT_FOUND" = true ]; then
+            echo "Setting up Swift/Objective-C environment..."
+            sudo apt-get update
+            sudo apt-get install -y ruby
+            gem install cocoapods
+            if [ -f "Podfile" ]; then
+              echo "Installing CocoaPods dependencies..."
+              pod install
+            fi
+          fi
+
+          if [ "$GO_FOUND" = true ]; then
+            echo "Setting up Go environment..."
+            sudo apt-get update
+            sudo apt-get install -y golang-go
+            if [ -f "go.mod" ]; then
+              echo "Installing Go dependencies..."
+              go mod download
+            fi
+          fi
+
+          if [ "$RUST_FOUND" = true ]; then
+            echo "Setting up Rust environment..."
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            source $HOME/.cargo/env
+            if [ -f "Cargo.toml" ]; then
+              echo "Compiling Rust project..."
+              cargo build
+            fi
+          fi
+
+      - name: Install TruffleHog
+        run: |
+          curl -sSfL https://github.com/trufflesecurity/trufflehog/releases/latest/download/trufflehog_linux_amd64.tar.gz | tar -xz -C /usr/local/bin trufflehog
+
+      - name: Run TruffleHog
+        id: trufflehog
+        run: |
+          trufflehog --json . > trufflehog_report.json || true
+
+      - name: Check TruffleHog findings and create issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = 'trufflehog_report.json';
+            if (fs.existsSync(reportPath)) {
+              const lines = fs.readFileSync(reportPath, 'utf8').split('\n').filter(line => line.trim() !== '');
+              const report = lines.map(line => JSON.parse(line));
+              if (report.length > 0) {
+                const issueBody = `
+                ## Secrets Detected by TruffleHog
+
+                TruffleHog found the following secrets in the repository:
+
+                ${report.map(r => `- ${r.DetectorName}: ${r.Raw}`).join('\n')}
+
+                Please review and remove or rotate these secrets.
+                `;
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: 'Secrets Detected by TruffleHog',
+                  body: issueBody,
+                  assignees: [context.actor]
+                });
+              } else {
+                console.log('No secrets found by TruffleHog.');
+              }
+            } else {
+              console.log('TruffleHog report not found.');
+            }
 
       - name: Install govulncheck
-        if: steps.detect-languages.outputs.GO_FOUND == 'true'
+        if: env.GO_FOUND == 'true'
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
-        if: steps.detect-languages.outputs.GO_FOUND == 'true'
+        if: env.GO_FOUND == 'true'
         id: govulncheck
         run: |
-          govulncheck ./... > govulncheck_output.txt 2>&1 || true
-          if grep -q "No vulnerabilities found" govulncheck_output.txt; then
-            echo "GOVULNCHECK_FOUND=false" >> $GITHUB_OUTPUT
-          else
-            echo  "GOVULNCHECK_FOUND=true" >> $GITHUB_OUTPUT
-          fi
+          govulncheck ./... > govulncheck_report.txt || true
 
-      - name: Create issue for govulncheck
-        if: steps.govulncheck.outputs.GOVULNCHECK_FOUND == 'true'
+      - name: Check govulncheck findings and create issue
+        if: env.GO_FOUND == 'true' && always()
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const output = fs.readFileSync('govulncheck_output.txt', 'utf8');
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'Go Vulnerabilities Detected',
-              body: `## Go Vulnerabilities\n\n\`\`\`\n${output}\n\`\`\``,
-              assignees: [context.actor]
-            });
+            const reportPath = 'govulncheck_report.txt';
+            if (fs.existsSync(reportPath)) {
+              const report = fs.readFileSync(reportPath, 'utf8');
+              if (report.trim() !== '') {
+                const issueBody = `
+                ## Vulnerabilities Detected by govulncheck
 
-      - name: Install trufflehog
-        run: |
-          curl -sSfL https://github.com/trufflesecurity/trufflehog/releases/download/v3.82.1/trufflehog_3.82.1_linux_amd64.tar.gz | tar -xz -C /usr/local/bin trufflehog
+                govulncheck found the following vulnerabilities in Go dependencies:
 
-      - name: Run trufflehog
-        id: trufflehog
-        run: |
-          trufflehog git file://. --only-verified --fail > trufflehog_output.txt 2>&1
-          if [ $? -eq 183 ]; then
-            echo "TRUFFLEHOG_FOUND=true" >> $GITHUB_OUTPUT
-          else
-            echo "TRUFFLEHOG_FOUND=false" >> $GITHUB_OUTPUT
-          fi
+                \`\`\`
+                ${report}
+                \`\`\`
 
-      - name: Create issue for trufflehog
-        if: steps.trufflehog.outputs.TRUFFLEHOG_FOUND == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const output = fs.readFileSync('trufflehog_output.txt', 'utf8');
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: 'Leaked Secrets Detected',
-              body: `## Leaked Secrets\n\n\`\`\`\n ${output}\n\`\`\``,
-              assignees: [context.actor]
-            });
+                Please review and update the affected dependencies.
+                `;
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: 'Vulnerabilities Detected by govulncheck',
+                  body: issueBody,
+                  assignees: [context.actor]
+                });
+              } else {
+                console.log('No vulnerabilities found by govulncheck.');
+              }
+            } else {
+              console.log('govulncheck report not found.');
+            }
 
       - name: Set up JDK 11
         uses: actions/setup-java@v4
@@ -138,70 +312,97 @@ jobs:
           script: |
             const fs = require('fs');
             const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
+            console.log(`Attempting to read report at: ${reportPath}`);
             if (!fs.existsSync(reportPath)) {
               console.error(`Report file not found at ${reportPath}`);
               return;
             }
             const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
-            const workspace = '${{ github.workspace }}';
-            for (const dep of report.dependencies) {
+
+            const vulnMap = {};
+
+            report.dependencies.forEach(dep => {
               if (dep.vulnerabilities && dep.vulnerabilities.length > 0) {
                 const criticalVulns = dep.vulnerabilities.filter(v => {
                   let score = -1;
                   if (v.cvssv3 && v.cvssv3.baseScore) {
                     score = v.cvssv3.baseScore;
                   } else if (v.cvssv2 && v.cvssv2.score && v.cvssv2.score !== -1.0) {
-                    score = v.cvssv2.score;
+                    score =  v.cvssv2.score;
                   }
                   return score >= 7;
                 });
-                if (criticalVulns.length > 0) {
-                  let libraryName = 'Unknown';
-                  let version = 'Unknown';
-                  if (dep.packages && dep.packages.length > 0) {
-                    const packageId = dep.packages[0].id;
-                    const [namePart, ver] = packageId.split('@');
-                    libraryName = namePart.replace(/^pkg:[^\/]+\//, '');
-                    version = ver;
-                  }
-                  let filePath = dep.filePath;
-                  if (filePath.startsWith(workspace)) {
-                    filePath = filePath.substring(workspace.length + 1);
-                  }
-                  const title = `Vulnerability in ${libraryName} version ${version}`;
-                  const searchResult = await github.rest.search.issuesAndPullRequests({
-                    q: `repo:${context.repo.owner}/${context.repo.repo} type:issue state:open "${title}" in:title`
-                  });
-                  if (searchResult.data.total_count === 0) {
-                    const vulnDetails = criticalVulns.map(v => {
-                      let score = 'Unknown';
-                      if (v.cvssv3 && v.cvssv3.baseScore) {
-                        score = v.cvssv3.baseScore;
-                      } else if (v.cvssv2 && v.cvssv2.score) {
-                        score = v.cvssv2.score;
-                      }
-                      return `${v.name} (CVSS: ${score})`;
-                    }).join('\n');
-                    const issueBody = `
-                    ## Vulnerability in ${libraryName} version ${version}
-
-                    File: ${filePath}
-
-                    Vulnerabilities:
-                    ${vulnDetails}
-
-                    Please review and update the library.
-                    `;
-                    await github.rest.issues.create({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      title: title,
-                      body: issueBody,
-                      assignees: [context.actor]
-                    });
-                  } else {
-                    console.log(`Issue already exists for ${title}`);
+                if (criticalVulns.length > 0 && dep.packages && dep.packages.length > 0) {
+                  const packageId = dep.packages[0].id;
+                  const match = packageId.match(/pkg:\w+\/(.+)@(.+)/);
+                  if (match) {
+                    const library = match[1];
+                    const version = match[2];
+                    const key = `${library}@${version}`;
+                    const workspace = '${{ github.workspace }}';
+                    let filePath = dep.filePath;
+                    if (filePath.startsWith(workspace)) {
+                      filePath = filePath.substring(workspace.length + 1);
+                    }
+                    if (!vulnMap[key]) {
+                      vulnMap[key] = {
+                        library,
+                        version,
+                        files: [filePath],
+                        vulns: criticalVulns
+                      };
+                    } else {
+                      vulnMap[key].files.push(filePath);
+                    }
                   }
                 }
+              }
+            });
+
+            // Get open issue titles
+            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100
+            });
+            const openIssueTitles = openIssues.map(issue => issue.title);
+
+            // Create issues for new vulnerabilities
+            for (const key in vulnMap) {
+              const entry = vulnMap[key];
+              const title = `Vulnerability in ${entry.library} version ${entry.version}`;
+              if (!openIssueTitles.includes(title)) {
+                const vulnDetails = entry.vulns.map(v => {
+                  let score = 'Unknown';
+                  if (v.cvssv3 && v.cvssv3.baseScore) {
+                    score = v.cvssv3.baseScore;
+                  } else if (v.cvssv2 && v.cvssv2.score) {
+                    score = v.cvssv2.score;
+                  }
+                  return `${v.name} (CVSS: ${score})`;
+                }).join('\n');
+
+                const issueBody = `
+                ## Vulnerability Detected in ${entry.library} version ${entry.version}
+
+                Used in files:
+                ${entry.files.map(file => `- ${file}`).join('\n')}
+
+                Vulnerabilities:
+                ${vulnDetails}
+
+              Please review and take necessary actions.
+                `;
+                await github.rest.issues.create({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  title: title,
+                  body: issueBody,
+                  assignees: [context.actor]
+                });
+                console.log(`Created issue for ${title}`);
+              } else {
+                console.log(`Issue already  exists for ${title}`);
               }
             }
