@@ -1,0 +1,72 @@
+name: Dependabot Security Check
+
+on:
+  push:
+    branches:
+      - main  # Ajuste para o branch que você quer monitorar
+
+permissions:
+  security-events: read  # Permissão para ler alertas de segurança
+  issues: write         # Permissão para criar issues
+  contents: read        # Permissão para ler o conteúdo do repositório
+
+jobs:
+  check-dependabot-alerts:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout do código do repositório
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Obter informações do commit atual
+      - name: Get commit details
+        id: commit
+        run: |
+          echo "author=$(git log -1 --pretty=format:'%an')" >> $GITHUB_OUTPUT
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
+      # Buscar alertas abertos do Dependabot via API
+      - name: Fetch Dependabot alerts
+        id: fetch-alerts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          alerts=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/dependabot/alerts?state=open")
+          echo "alerts=$alerts" >> $GITHUB_OUTPUT
+
+      # Verificar se há vulnerabilidades relevantes e criar issue
+      - name: Check vulnerabilities and create issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Parse dos alertas (exemplo simples, ajuste conforme necessário)
+          if [ -n "${{ steps.fetch-alerts.outputs.alerts }}" ] && [ "${{ steps.fetch-alerts.outputs.alerts }}" != "[]" ]; then
+            # Extrair informações do alerta (ajuste conforme a estrutura da API)
+            description=$(echo "${{ steps.fetch-alerts.outputs.alerts }}" | jq -r '.[0].security_advisory.description')
+            vuln_id=$(echo "${{ steps.fetch-alerts.outputs.alerts }}" | jq -r '.[0].number')
+            package=$(echo "${{ steps.fetch-alerts.outputs.alerts }}" | jq -r '.[0].dependency.package.name')
+
+            # Verificar se o commit atual ainda contém a vulnerabilidade (lógica simplificada)
+            # Aqui você pode adicionar uma lógica mais robusta, como grep no código
+            echo "Vulnerabilidade encontrada: $package (Alerta #$vuln_id)"
+
+            # Criar a issue
+            curl -s -X POST \
+              -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/issues" \
+              -d '{
+                "title": "Vulnerabilidade Dependabot #'"$vuln_id"' ainda presente no commit de ${{ steps.commit.outputs.author }}",
+                "body": "Descrição do Dependabot:\n\n'"$description"'\n\nAssociada ao commit: ${{ steps.commit.outputs.sha }}\nResponsável: ${{ steps.commit.outputs.author }}",
+                "assignees": ["${{ steps.commit.outputs.author }}"]
+              }'
+          else
+            echo "Nenhum alerta Dependabot aberto encontrado."
+          fi
+
+      # Instalar jq para parsing JSON (necessário para processar a resposta da API)
+      - name: Install jq
+        run: sudo apt-get install -y jq
