@@ -3,7 +3,7 @@ name: Dependabot Security Check
 on:
   push:
     branches:
-      - main  # Ajuste para o branch que você quer monitorar
+      - main  # Ajuste para o branch que você quer monitorar.
 
 permissions:
   security-events: read  # Permissão para ler alertas de segurança
