@@ -203,6 +203,8 @@ jobs:
           out: 'reports'
           args: >
             --failOnCVSS 7
+            --enableRetired
+            --noupdate
 
       - name: List reports directory contents
         if: always()
