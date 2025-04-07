@@ -279,7 +279,7 @@ jobs:
 
               The Dependency-Check has identified the following vulnerabilities with CVSS >= 7:
 
-              ${vulnerabilities.map(v => `Arquivo: ${v.filePath}\n**Biblioteca:** ${v.libraryName}\n${v.vulns.join('\n')}\n\n`).join('\n')}
+              ${vulnerabilities.map(v => `File: ${v.filePath}\n**Library Name:** ${v.libraryName}\n${v.vulns.join('\n')}\n\n`).join('\n')}
               Please review the attached full report and take appropriate action.
               `;
               await github.rest.issues.create({
