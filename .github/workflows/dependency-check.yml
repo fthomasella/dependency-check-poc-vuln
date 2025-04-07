@@ -275,17 +275,17 @@ jobs:
 
             if (vulnerabilities.length > 0) {
               const issueBody = `
-              ## Vulnerabilidades Detectadas
+              ## Vulnerabilities Detected
 
-              O Dependency-Check identificou as seguintes vulnerabilidades com CVSS >= 7:
+              The Dependency-Check has identified the following vulnerabilities with CVSS >= 7:
 
               ${vulnerabilities.map(v => `Arquivo: ${v.filePath}\n**Biblioteca:** ${v.libraryName}\n${v.vulns.join('\n')}\n\n`).join('\n')}
-              Por favor, revise o relatório completo em anexo e tome as ações necessárias.
+              Please review the attached full report and take appropriate action.
               `;
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: 'Vulnerabilidades Críticas Detectadas pelo Dependency-Check',
+                title: 'Critical Vulnerabilities Detected by Dependency-Check',
                 body: issueBody,
                 assignees: [context.actor]
               });
