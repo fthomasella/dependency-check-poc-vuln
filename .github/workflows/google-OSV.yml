@@ -1,0 +1,36 @@
+name: OSV Scanner
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run OSV Scanner
+        run: |
+          docker run --rm -v $(pwd):/workspace ghcr.io/google/osv-scanner:latest scan --format json /workspace > results.json
+
+      - name: Upload scan results
+        uses: actions/upload-artifact@v4
+        with:
+          name: osv-scan-results
+          path: results.json
+
+      - name: Check for vulnerabilities and create issue
+        run: |
+          VULNS=$(jq -r '.results[] | .source.path as $path | .packages[] | select(.vulnerabilities != null and .vulnerabilities != []) | "- **Path:** " + $path + "\n  **Package:** " + .package.name + "@" + .package.version + "\n  **Vulnerabilities:** " + (.vulnerabilities | map(.id) | join(", "))' results.json)
+          if [ -n "$VULNS" ]; then
+            BODY="Vulnerabilities found:\n\n$VULNS"
+            gh issue create --title "Vulnerabilities found by OSV Scanner" --body "$BODY" --assignee "dev_username"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
