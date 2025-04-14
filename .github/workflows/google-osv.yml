@@ -1,140 +1,22 @@
-name: Dependency Check PoC
+name: OSV Scanner
 on: [push]
-permissions:
-  contents: read
-  security-events: write
 
 jobs:
-  dependency-check:
+  scan:
     runs-on: ubuntu-latest
-    name: Dependency Check Test
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      
+      - name: Run OSV Scanner
+        uses: google/osv-scanner-action@main
         with:
-          fetch-depth: 0  # Fetch all history for better vulnerability scanning
+          path: .
+          output: osv-scan-results.json
       
-      - name: List directory contents
-        run: ls -la
-      
-      # Install OSV Scanner CLI directly
-      - name: Install OSV Scanner
-        run: |
-          curl -fsSL https://github.com/google/osv-scanner/releases/download/v1.3.0/osv-scanner_1.3.0_linux_amd64 -o osv-scanner
-          chmod +x osv-scanner
-          sudo mv osv-scanner /usr/local/bin/
-      
-      # Run OSV Scanner with JSON output
-      - name: Run OSV Scanner with JSON output
-        run: |
-          osv-scanner --json --recursive . > osv-scan-results.json
-      
-      # Convert JSON to SARIF format using a simple script
-      - name: Convert JSON to SARIF
-        run: |
-          cat > convert.js <<'EOL'
-          const fs = require('fs');
-          
-          // Read JSON data
-          const jsonData = JSON.parse(fs.readFileSync('osv-scan-results.json', 'utf8'));
-          
-          // Create basic SARIF structure
-          const sarifOutput = {
-            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
-            "version": "2.1.0",
-            "runs": [
-              {
-                "tool": {
-                  "driver": {
-                    "name": "OSV-Scanner",
-                    "informationUri": "https://github.com/google/osv-scanner",
-                    "rules": []
-                  }
-                },
-                "results": []
-              }
-            ]
-          };
-          
-          // Process each vulnerability
-          if (jsonData.results) {
-            jsonData.results.forEach((result, resultIndex) => {
-              if (result.vulnerabilities) {
-                result.vulnerabilities.forEach((vuln, vulnIndex) => {
-                  // Create a unique rule ID
-                  const ruleId = `OSV-${vuln.id.replace(/[^a-zA-Z0-9]/g, '-')}`;
-                  
-                  // Add rule to rules array if not already present
-                  const existingRuleIndex = sarifOutput.runs[0].tool.driver.rules.findIndex(r => r.id === ruleId);
-                  if (existingRuleIndex === -1) {
-                    sarifOutput.runs[0].tool.driver.rules.push({
-                      "id": ruleId,
-                      "name": vuln.id,
-                      "shortDescription": {
-                        "text": vuln.summary || "Security vulnerability"
-                      },
-                      "fullDescription": {
-                        "text": vuln.details || "Security vulnerability details unavailable"
-                      },
-                      "helpUri": vuln.references && vuln.references.length > 0 ? vuln.references[0].url : "",
-                      "properties": {
-                        "tags": ["security", "vulnerability"],
-                        "severity": vuln.severity || "UNKNOWN"
-                      }
-                    });
-                  }
-                  
-                  // Add result
-                  sarifOutput.runs[0].results.push({
-                    "ruleId": ruleId,
-                    "level": "warning",
-                    "message": {
-                      "text": `${vuln.summary || "Security vulnerability"} in ${result.package?.name || "unknown package"}.`
-                    },
-                    "locations": [
-                      {
-                        "physicalLocation": {
-                          "artifactLocation": {
-                            "uri": result.source?.path || "."
-                          },
-                          "region": {
-                            "startLine": 1,
-                            "startColumn": 1
-                          }
-                        }
-                      }
-                    ]
-                  });
-                });
-              }
-            });
-          }
-          
-          // Write SARIF output
-          fs.writeFileSync('osv-scan-results.sarif', JSON.stringify(sarifOutput, null, 2));
-          EOL
-          
-          node convert.js
-      
-      # Upload the SARIF file to GitHub Security tab
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v2
-        with:
-          sarif_file: osv-scan-results.sarif
-          category: osv-scanner
-      
-      # Run detailed scan with CLI for different dependency files
-      - name: Run detailed scan for dependencies
-        run: |
-          osv-scanner --json --recursive . > osv-scanner-detailed.json
-          osv-scanner --json $(find . -name "package-lock.json" -o -name "go.mod" -o -name "Cargo.lock" -o -name "Gemfile.lock" -o -name "requirements.txt" -o -name "composer.lock" -o -name "pom.xml" 2>/dev/null) > osv-scanner-lockfiles.json || echo "No lockfiles found or error occurred"
-      
-      # Save detailed scan results as artifacts
-      - name: Upload detailed scan results
+      - name: Upload scan results
         uses: actions/upload-artifact@v4
         with:
           name: osv-scanner-results
-          path: |
-            osv-scanner-detailed.json
-            osv-scanner-lockfiles.json
+          path: osv-scan-results.json
           retention-days: 7
