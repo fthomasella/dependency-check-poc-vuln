@@ -1,1 +1,21 @@
+name: Dependency Check PoC
 
+on: [push]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  dependency-check:
+    runs-on: ubuntu-latest
+    name: Dependency Check Test
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: List directory contents
+        run: ls -la
+
+      - name: osv-scanner
+        uses: google/osv-scanner-action@v2.0.1
