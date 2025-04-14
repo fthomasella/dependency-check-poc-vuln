@@ -58,8 +58,9 @@ jobs:
         run: |
           osv-scanner --lockfile="**/package-lock.json" --lockfile="**/go.mod" --lockfile="**/Cargo.lock" --lockfile="**/Gemfile.lock" --lockfile="**/requirements.txt" --lockfile="**/composer.lock" --lockfile="**/pom.xml" --json > osv-scanner-detailed.json
       
+      # Fixed: Updated to actions/upload-artifact@v4
       - name: Upload detailed scan results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: osv-scanner-results
           path: osv-scanner-detailed.json
