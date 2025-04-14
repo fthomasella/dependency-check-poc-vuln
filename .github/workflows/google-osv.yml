@@ -1,7 +1,6 @@
 name: Dependency Check PoC
 on: [push]
 permissions:
-  issues: write
   contents: read
   security-events: write
 
@@ -37,17 +36,7 @@ jobs:
           sarif_file: osv-scan-results.sarif
           category: osv-scanner
       
-      # Create GitHub issue if vulnerabilities are found
-      - name: Create GitHub Issue on Vulnerabilities
-        if: ${{ failure() }}
-        uses: JasonEtco/create-an-issue@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          filename: .github/VULNERABILITY_ISSUE_TEMPLATE.md
-          update_existing: true
-      
-      # Optional: Install and run additional OSV CLI scan
+      # Install and run additional OSV CLI scan
       - name: Install OSV Scanner CLI
         run: |
           curl -fsSL https://github.com/google/osv-scanner/releases/download/v1.3.0/osv-scanner_1.3.0_linux_amd64 -o osv-scanner
@@ -58,7 +47,7 @@ jobs:
         run: |
           osv-scanner --lockfile="**/package-lock.json" --lockfile="**/go.mod" --lockfile="**/Cargo.lock" --lockfile="**/Gemfile.lock" --lockfile="**/requirements.txt" --lockfile="**/composer.lock" --lockfile="**/pom.xml" --json > osv-scanner-detailed.json
       
-      # Fixed: Updated to actions/upload-artifact@v4
+      # Save detailed scan results as artifact
       - name: Upload detailed scan results
         uses: actions/upload-artifact@v4
         with:
