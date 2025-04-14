@@ -8,15 +8,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Run OSV Scanner
-        uses: google/osv-scanner-action@main
-        with:
-          path: .
-          output: osv-scan-results.json
+      # Install OSV Scanner CLI
+      - name: Install OSV Scanner
+        run: |
+          curl -fsSL https://github.com/google/osv-scanner/releases/download/v1.3.0/osv-scanner_1.3.0_linux_amd64 -o osv-scanner
+          chmod +x osv-scanner
+          sudo mv osv-scanner /usr/local/bin/
       
+      # Run OSV Scanner (simple command)
+      - name: Run OSV Scanner
+        run: osv-scanner --json . > osv-scan-results.json
+      
+      # Upload scan results
       - name: Upload scan results
         uses: actions/upload-artifact@v4
         with:
           name: osv-scanner-results
           path: osv-scan-results.json
-          retention-days: 7
