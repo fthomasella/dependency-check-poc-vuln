@@ -1,10 +1,9 @@
 name: Dependency Check PoC
-
 on: [push]
-
 permissions:
   issues: write
   contents: read
+  security-events: write
 
 jobs:
   dependency-check:
@@ -13,9 +12,55 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0  # Fetch all history for better vulnerability scanning
+      
       - name: List directory contents
         run: ls -la
-
-      - name: osv-scanner
+      
+      - name: OSV Scanner
         uses: google/osv-scanner-action@v2.0.1
+        with:
+          # Enable recursive scanning of the repository
+          recursive: true
+          # Include dev dependencies in scan
+          skip-dev: false
+          # Output format (supports JSON or SARIF)
+          format: sarif
+          # Output file path
+          output: osv-scan-results.sarif
+      
+      # Upload the SARIF file to GitHub Security tab
+      - name: Upload SARIF file
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: osv-scan-results.sarif
+          category: osv-scanner
+      
+      # Create GitHub issue if vulnerabilities are found
+      - name: Create GitHub Issue on Vulnerabilities
+        if: ${{ failure() }}
+        uses: JasonEtco/create-an-issue@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          filename: .github/VULNERABILITY_ISSUE_TEMPLATE.md
+          update_existing: true
+      
+      # Optional: Install and run additional OSV CLI scan
+      - name: Install OSV Scanner CLI
+        run: |
+          curl -fsSL https://github.com/google/osv-scanner/releases/download/v1.3.0/osv-scanner_1.3.0_linux_amd64 -o osv-scanner
+          chmod +x osv-scanner
+          sudo mv osv-scanner /usr/local/bin/
+      
+      - name: Run detailed scan with CLI
+        run: |
+          osv-scanner --lockfile="**/package-lock.json" --lockfile="**/go.mod" --lockfile="**/Cargo.lock" --lockfile="**/Gemfile.lock" --lockfile="**/requirements.txt" --lockfile="**/composer.lock" --lockfile="**/pom.xml" --json > osv-scanner-detailed.json
+      
+      - name: Upload detailed scan results
+        uses: actions/upload-artifact@v3
+        with:
+          name: osv-scanner-results
+          path: osv-scanner-detailed.json
+          retention-days: 7
