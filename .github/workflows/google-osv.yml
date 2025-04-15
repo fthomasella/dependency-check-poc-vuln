@@ -1,46 +1,56 @@
-name: Google OSV Scanner
+name: OSV-Scanner Workflow
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  # Permite executar manualmente o workflow pela interface do GitHub
-  workflow_dispatch:
+# Define quando o workflow será executado
+on: [push]
+
+# Permissões necessárias para enviar relatórios ao GitHub
+permissions:
+  contents: read
+  issues: write
+  security-events: write
 
 jobs:
   osv-scan:
     runs-on: ubuntu-latest
+
     steps:
-      # 1. Fazer checkout do código
-      - name: Checkout repository
+      # 1. Faz checkout do código
+      - name: Checkout code
         uses: actions/checkout@v4
+
+      # 2. Instala o Go
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          fetch-depth: 0
-      
-      # 2. Instalar Go
-      - name: Setup Go
-        uses: actions/setup-go@v4
-        with:
-          go-version: '1.21'
+          go-version: '1.23' # Use uma versão recente e estável do Go
           check-latest: true
-      
-      # 3. Instalar Google OSV Scanner
-      - name: Install OSV Scanner
+
+      # 3. Instala o OSV-Scanner
+      - name: Install OSV-Scanner
         run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
-      
-      # 4. Verificar a instalação
-      - name: Check OSV Scanner installation
-        run: osv-scanner --version
-      
-      # 5. Executar o scanner no repositório
-      - name: Run OSV Scanner
-        run: osv-scanner --format json --output osv-report.json .
-      
-      # 6. Fazer upload do relatório como artefato
-      - name: Upload OSV Scanner report
-        uses: actions/upload-artifact@v4
+
+      # 4. Verifica a instalação do OSV-Scanner
+      - name: Verify OSV-Scanner installation
+        run: |
+          if ! command -v osv-scanner &> /dev/null; then
+            echo "OSV-Scanner não foi instalado corretamente"
+            exit 1
+          else
+            echo "OSV-Scanner instalado com sucesso"
+            osv-scanner --version
+          fi
+        env:
+          PATH: ${{ env.HOME }}/go/bin:$PATH # Adiciona o diretório do Go ao PATH
+
+      # 5. Executa o OSV-Scanner no repositório
+      - name: Run OSV-Scanner
+        run: osv-scanner --recursive --format sarif --output results.sarif .
+        env:
+          PATH: ${{ env.HOME }}/go/bin:$PATH
+
+      # 6. Envia o relatório SARIF para o GitHub
+      - name: Upload SARIF report
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          name: osv-scanner-report
-          path: osv-report.json
-          retention-days: 7
+          sarif_file: results.sarif
+        if: always() # Garante que o relatório seja enviado mesmo se o scan falhar
