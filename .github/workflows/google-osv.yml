@@ -41,6 +41,11 @@ jobs:
       - name: Create reports directory
         run: mkdir -p reports
 
+      # Checa diretorio.
+
+      - name: Create reports directory
+        run: pwd
+
       # Instalar Go (escolha uma versão apropriada para seu projeto)
       - name: Set up Go
         uses: actions/setup-go@v5
