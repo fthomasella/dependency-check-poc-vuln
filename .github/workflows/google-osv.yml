@@ -29,43 +29,55 @@ jobs:
     name: Scan Go Project with OSV-Scanner
     runs-on: ubuntu-latest
     steps:
-      # 1. Fazer checkout do código
+      # Fazer checkout do código
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. Instalar Go (escolha uma versão apropriada para seu projeto)
+      - name: List directory contents
+        run: ls -la
+
+      # Instalar Go (escolha uma versão apropriada para seu projeto)
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21' # Ou a versão que seu projeto utiliza
 
-      # 3. Instalar o OSV-Scanner usando go install
+      # Cria a estrutura para o report.
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
+      # Instalar o OSV-Scanner usando go install
       # O binário será instalado em $GOPATH/bin ou $HOME/go/bin, que setup-go geralmente adiciona ao PATH
       - name: Install OSV-Scanner
         run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
 
-      # 4. Checar a instalação (verificar se o comando existe e retorna a versão)
+      # Checar a instalação (verificar se o comando existe e retorna a versão)
       - name: Verify OSV-Scanner installation
         run: osv-scanner --version
 
-      # 5. Executar o OSV-Scanner no repositório
+      - name: List reports directory contents
+        if: always()
+        run: ls -la ${{ github.workspace }}/reports
+
+      # Executar o OSV-Scanner no repositório
       #    - O formato SARIF é ideal para integração com o GitHub Security tab
       #    - './...' escaneia o diretório atual recursivamente
       #    - 'continue-on-error: true' garante que o upload do relatório ocorra mesmo se vulnerabilidades forem encontradas (o scanner retorna erro nesse caso)
       - name: Run OSV-Scanner and generate SARIF report
-        run: osv-scanner scan --format sarif --output=results.sarif ./...
+        run: osv-scanner scan --format sarif --output=results.sarif ${{ github.workspace }}
         continue-on-error: true # Continua mesmo se encontrar vulnerabilidades para garantir o upload do relatório
 
-      # 6. Enviar o relatório SARIF para o GitHub Security tab
+      # Enviar o relatório SARIF para o GitHub Security tab
       #    Esta é a forma mais simples e integrada de visualizar os resultados no GitHub
       - name: Upload SARIF report to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3
+        
         # Executa sempre, mesmo se o passo anterior falhou (devido a continue-on-error),
         # mas só prossegue se o arquivo SARIF existir.
         if: always()
         with:
           # Caminho para o arquivo SARIF gerado no passo anterior
-          sarif_file: results.sarif
+          sarif_file: ${{ github.workspace }}/reports
           # Categoria opcional para organizar os alertas na aba Security
           category: osv-scanner-go-install
-
