@@ -1,27 +1,46 @@
-name: OSV Scanner
-on: [push]
+name: Google OSV Scanner
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  # Permite executar manualmente o workflow pela interface do GitHub
+  workflow_dispatch:
 
 jobs:
-  scan:
+  osv-scan:
     runs-on: ubuntu-latest
     steps:
+      # 1. Fazer checkout do código
       - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      # Install OSV Scanner CLI
-      - name: Install OSV Scanner
-        run: |
-          curl -fsSL https://github.com/google/osv-scanner/releases/download/v1.3.0/osv-scanner_1.3.0_linux_amd64 -o osv-scanner
-          chmod +x osv-scanner
-          sudo mv osv-scanner /usr/local/bin/
-      
-      # Run OSV Scanner (simple command)
-      - name: Run OSV Scanner
-        run: osv-scanner --json . > osv-scan-results.json
-      
-      # Upload scan results
-      - name: Upload scan results
-        uses: actions/upload-artifact@v4
+        uses: actions/checkout@v3
         with:
-          name: osv-scanner-results
-          path: osv-scan-results.json
+          fetch-depth: 0
+      
+      # 2. Instalar Go
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+          check-latest: true
+      
+      # 3. Instalar Google OSV Scanner
+      - name: Install OSV Scanner
+        run: go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest
+      
+      # 4. Verificar a instalação
+      - name: Check OSV Scanner installation
+        run: osv-scanner --version
+      
+      # 5. Executar o scanner no repositório
+      - name: Run OSV Scanner
+        run: osv-scanner --format json --output osv-report.json .
+      
+      # 6. Fazer upload do relatório como artefato
+      - name: Upload OSV Scanner report
+        uses: actions/upload-artifact@v3
+        with:
+          name: osv-scanner-report
+          path: osv-report.json
+          retention-days: 7
