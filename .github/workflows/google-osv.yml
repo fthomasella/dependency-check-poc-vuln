@@ -36,16 +36,16 @@ jobs:
       - name: List directory contents
         run: ls -la
 
+      # Cria a estrutura para o report.
+
+      - name: Create reports directory
+        run: mkdir -p reports
+
       # Instalar Go (escolha uma versão apropriada para seu projeto)
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.21' # Ou a versão que seu projeto utiliza
-
-      # Cria a estrutura para o report.
-
-      - name: Create reports directory
-        run: mkdir -p reports
 
       # Instalar o OSV-Scanner usando go install
       # O binário será instalado em $GOPATH/bin ou $HOME/go/bin, que setup-go geralmente adiciona ao PATH
@@ -62,11 +62,12 @@ jobs:
 
       # Executar o OSV-Scanner no repositório
       #    - O formato SARIF é ideal para integração com o GitHub Security tab
-      #    - './...' escaneia o diretório atual recursivamente
+      #    escaneia o diretório atual recursivamente
       #    - 'continue-on-error: true' garante que o upload do relatório ocorra mesmo se vulnerabilidades forem encontradas (o scanner retorna erro nesse caso)
       - name: Run OSV-Scanner and generate SARIF report
-        run: osv-scanner scan --format sarif --output=results.sarif ${{ github.workspace }}
+        run: osv-scanner scan --format sarif --output=${{ github.workspace }}/reports/results.sarif 
         continue-on-error: true # Continua mesmo se encontrar vulnerabilidades para garantir o upload do relatório
+
 
       # Enviar o relatório SARIF para o GitHub Security tab
       #    Esta é a forma mais simples e integrada de visualizar os resultados no GitHub
@@ -78,6 +79,6 @@ jobs:
         if: always()
         with:
           # Caminho para o arquivo SARIF gerado no passo anterior
-          sarif_file: ${{ github.workspace }}/reports
+          sarif_file: ${{ github.workspace }}/reports/results.sarif 
           # Categoria opcional para organizar os alertas na aba Security
           category: osv-scanner-go-install
