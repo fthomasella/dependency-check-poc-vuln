@@ -53,7 +53,7 @@ jobs:
       #    - './...' escaneia o diretório atual recursivamente
       #    - 'continue-on-error: true' garante que o upload do relatório ocorra mesmo se vulnerabilidades forem encontradas (o scanner retorna erro nesse caso)
       - name: Run OSV-Scanner and generate SARIF report
-        run: osv-scanner --format=sarif --output=results.sarif ./...
+        run: osv-scanner scan --format sarif --output=results.sarif ./...
         continue-on-error: true # Continua mesmo se encontrar vulnerabilidades para garantir o upload do relatório
 
       # 6. Enviar o relatório SARIF para o GitHub Security tab
