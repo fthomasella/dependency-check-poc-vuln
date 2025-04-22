@@ -46,13 +46,22 @@ jobs:
           cat bom.xml || echo "BOM file is empty or unreadable"
 
       # Step 7: Upload SBOM to Dependency-Track with continue-on-error
-      - name: Upload SBOM to Dependency-Track
-        uses: DependencyTrack/gh-upload-sbom@v3
-        with:
-          serverHostname: ${{ secrets.DEPENDENCYTRACK_SERVER }}  # Ngrok URL (e.g., abc123.ngrok.io)
-          apiKey: ${{ secrets.DEPENDENCYTRACK_APIKEY }}  # Stored in GitHub Secrets
-          projectName: 'MyProject'  # Replace with your project name
-          projectVersion: '1.0'  # Replace with your project version
-          bomFilename: 'bom.xml'
-          autoCreate: true
-        continue-on-error: true  # Continue to see full logs even if upload fails
+     # - name: Upload SBOM to Dependency-Track
+     #   uses: DependencyTrack/gh-upload-sbom@v3
+     #   with:
+     #     serverHostname: ${{ secrets.DEPENDENCYTRACK_SERVER }}  # Ngrok URL (e.g., abc123.ngrok.io)
+     #     apiKey: ${{ secrets.DEPENDENCYTRACK_APIKEY }}  # Stored in GitHub Secrets
+     #     projectName: 'MyProject'  # Replace with your project name
+     #     projectVersion: '1.0'  # Replace with your project version
+     #     bomFilename: 'bom.xml'
+     #     autoCreate: true
+     #   continue-on-error: true  # Continue to see full logs even if upload fails
+
+      - name: Upload SBOM with curl
+        run: |
+          curl -X "POST" "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/bom" \
+          -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          -F "autoCreate=true" \
+          -F "projectName=MyProject" \
+          -F "projectVersion=1.0" \
+          -F "bom=@bom.xml"
