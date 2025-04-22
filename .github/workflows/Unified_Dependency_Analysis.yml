@@ -1,0 +1,157 @@
+name: Unified Dependency Analysis - working
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  dependency-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Step 2: Detect Language
+      - name: Detect Language
+        id: detect_language
+        run: |
+          if [ -f pom.xml ]; then
+            echo "language=java" >> $GITHUB_OUTPUT
+          elif [ -f package.json ]; then
+            echo "language=nodejs" >> $GITHUB_OUTPUT
+          else
+            echo "language=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      # Step 3: Set up Java for Dependency-Check and SBOM generation
+      - name: Set up Java
+        if: steps.detect_language.outputs.language == 'java'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Step 4: Set up Node.js for Dependency-Check and SBOM generation
+      - name: Set up Node.js
+        if: steps.detect_language.outputs.language == 'nodejs'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      # Step 5: Create reports directory for Dependency-Check
+      - name: Create Reports Directory
+        run: mkdir -p reports
+
+      # Step 6: Run Dependency-Check
+      - name: Run Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'dependency-check-poc'
+          path: '.'
+          format: 'ALL'
+          out: 'reports'
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+            --noupdate
+        env:
+          JAVA_HOME: /opt/jdk
+
+      # Step 7: Upload Dependency-Check Report
+      - name: Upload Dependency Check Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: reports/
+        if: always()
+
+      # Step 8: Generate SBOM for Java
+      - name: Generate SBOM for Java
+        if: steps.detect_language.outputs.language == 'java'
+        id: generate_sbom_java
+        run: |
+          mvn org.cyclonedx:maven-plugin:2.7.11:makeAggregateBom -DoutputFormat=xml -DoutputName=bom
+          echo "sbom_path=target/bom.xml" >> $GITHUB_OUTPUT
+
+      # Step 9: Generate SBOM for Node.js
+      - name: Generate SBOM for Node.js
+        if: steps.detect_language.outputs.language == 'nodejs'
+        id: generate_sbom_nodejs
+        run: |
+          npm ci
+          npx @cyclonedx/cyclonedx-npm --output-format XML --output-file bom.xml
+          echo "sbom_path=bom.xml" >> $GITHUB_OUTPUT
+
+      # Step 10: Check if SBOM file exists
+      - name: Check SBOM File
+        run: |
+          if [ "${{ steps.detect_language.outputs.language }}" == "java" ]; then
+            SBOM_PATH="${{ steps.generate_sbom_java.outputs.sbom_path }}"
+          elif [ "${{ steps.detect_language.outputs.language }}" == "nodejs" ]; then
+            SBOM_PATH="${{ steps.generate_sbom_nodejs.outputs.sbom_path }}"
+          else
+            echo "Unknown language or no SBOM generated"
+            exit 1
+          fi
+          ls -l $SBOM_PATH || echo "SBOM file not found"
+          cat $SBOM_PATH || echo "SBOM file is empty or unreadable"
+
+      # Step 11: Upload SBOM to Dependency-Track
+      - name: Upload SBOM to Dependency-Track
+        run: |
+          if [ "${{ steps.detect_language.outputs.language }}" == "java" ]; then
+            SBOM_PATH="${{ steps.generate_sbom_java.outputs.sbom_path }}"
+          elif [ "${{ steps.detect_language.outputs.language }}" == "nodejs" ]; then
+            SBOM_PATH="${{ steps.generate_sbom_nodejs.outputs.sbom_path }}"
+          else
+            echo "Unknown language"
+            exit 1
+          fi
+          curl -X "POST" "[invalid url, do not cite] secrets.DEPENDENCYTRACK_SERVER }}/api/v1/bom" \
+          -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          -F "autoCreate=true" \
+          -F "projectName=MyProject" \
+          -F "projectVersion=1.0" \
+          -F "bom=@$SBOM_PATH"
+
+      # Step 12: Wait for SBOM processing
+      - name: Wait for SBOM processing
+        run: sleep 30
+
+      # Step 13: Install jq for JSON parsing
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # Step 14: Get Project UUID
+      - name: Get Project UUID
+        id: get_uuid
+        run: |
+          RESPONSE=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          "[invalid url, do not cite] secrets.DEPENDENCYTRACK_SERVER }}/api/v1/project/lookup?name=MyProject&version=1.0")
+          echo "Response: $RESPONSE"
+          UUID=$(echo $RESPONSE | jq -r '.uuid')
+          if [ -z "$UUID" ]; then
+            echo "Project not found"
+            exit 1
+          fi
+          echo "uuid=$UUID" >> $GITHUB_OUTPUT
+
+      # Step 15: Check for High or Critical Vulnerabilities
+      - name: Check Vulnerabilities
+        run: |
+          UUID=${{ steps.get_uuid.outputs.uuid }}
+          VULNS=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          "[invalid url, do not cite] secrets.DEPENDENCYTRACK_SERVER }}/api/v1/vulnerability/project/$UUID" | \
+          jq '[.[] | select(.severity == "HIGH" or .severity == "CRITICAL")]')
+          COUNT=$(echo $VULNS | jq length)
+          if [ $COUNT -gt 0 ]; then
+            echo "Found $COUNT high or critical vulnerabilities:"
+            echo $VULNS | jq .
+            exit 1
+          else
+            echo "No high or critical vulnerabilities found."
+          fi
+```
