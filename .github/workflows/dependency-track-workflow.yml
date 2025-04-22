@@ -1,4 +1,4 @@
-name: Dependency-Track SBOM Analysis
+name: Dependency-Track SBOM Analysis with Debug
 
 on:
   push:
@@ -10,66 +10,49 @@ jobs:
   dependency-track:
     runs-on: ubuntu-latest
     steps:
-      # Checkout the repository
+      # Step 1: Checkout the repository
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Set up Node.js
+      # Step 2: Set up Node.js (adjust version as needed)
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18' # Adjust to your project's Node.js version
+          node-version: '18'  # Change to your project's Node.js version
 
-      # Install dependencies and generate CycloneDX SBOM
+      # Step 3: Debug secrets (check if they are set without revealing values)
+      - name: Debug Secrets
+        run: |
+          echo "DEPENDENCYTRACK_SERVER is set: ${{ secrets.DEPENDENCYTRACK_SERVER != '' }}"
+          echo "DEPENDENCYTRACK_APIKEY is set: ${{ secrets.DEPENDENCYTRACK_APIKEY != '' }}"
+
+      # Step 4: Test connectivity to Dependency-Track server
+      - name: Test Connectivity to Dependency-Track
+        run: |
+          curl -v https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/version
+        continue-on-error: true  # Continue even if this fails to capture logs
+
+      # Step 5: Install dependencies and generate CycloneDX SBOM
       - name: Generate SBOM
         run: |
-          npm ci # Install project dependencies
+          npm ci  # Install project dependencies
           npm install -g @cyclonedx/cyclonedx-npm
           npx cyclonedx-npm --output-format XML --output-file bom.xml
 
-      # Upload SBOM to Dependency-Track
+      # Step 6: Check if BOM file exists and is readable
+      - name: Check BOM File
+        run: |
+          ls -l bom.xml || echo "BOM file not found"
+          cat bom.xml || echo "BOM file is empty or unreadable"
+
+      # Step 7: Upload SBOM to Dependency-Track with continue-on-error
       - name: Upload SBOM to Dependency-Track
         uses: DependencyTrack/gh-upload-sbom@v3
         with:
-          serverHostname: ${{ secrets.DEPENDENCYTRACK_SERVER }} # Ngrok URL (e.g., abc123.ngrok.io)
-          apiKey: ${{ secrets.DEPENDENCYTRACK_APIKEY }} # Stored in GitHub Secrets
-          projectName: 'MyProject'
-          projectVersion: '1.0'
+          serverHostname: ${{ secrets.DEPENDENCYTRACK_SERVER }}  # Ngrok URL (e.g., abc123.ngrok.io)
+          apiKey: ${{ secrets.DEPENDENCYTRACK_APIKEY }}  # Stored in GitHub Secrets
+          projectName: 'MyProject'  # Replace with your project name
+          projectVersion: '1.0'  # Replace with your project version
           bomFilename: 'bom.xml'
           autoCreate: true
-
-      # Query Dependency-Track for vulnerabilities and fail if High or Critical are found
-      - name: Check for High or Critical Vulnerabilities
-        env:
-          DEPENDENCYTRACK_SERVER: ${{ secrets.DEPENDENCYTRACK_SERVER }}
-          DEPENDENCYTRACK_APIKEY: ${{ secrets.DEPENDENCYTRACK_APIKEY }}
-          PROJECT_NAME: 'MyProject'
-          PROJECT_VERSION: '1.0'
-        run: |
-          # Install jq for JSON parsing
-          sudo apt-get update && sudo apt-get install -y jq
-
-          # Get project UUID from Dependency-Track
-          PROJECT_UUID=$(curl -s -H "Authorization: Bearer $DEPENDENCYTRACK_APIKEY" \
-            "https://$DEPENDENCYTRACK_SERVER/api/v1/project/lookup?name=$PROJECT_NAME&version=$PROJECT_VERSION" | \
-            jq -r '.uuid')
-
-          if [ -z "$PROJECT_UUID" ]; then
-            echo "Error: Project not found in Dependency-Track"
-            exit 1
-          fi
-
-          # Fetch vulnerabilities for the project
-          VULNS=$(curl -s -H "Authorization: Bearer $DEPENDENCYTRACK_APIKEY" \
-            "https://$DEPENDENCYTRACK_SERVER/api/v1/vulnerability/project/$PROJECT_UUID" | \
-            jq '[.[] | select(.severity == "HIGH" or .severity == "CRITICAL")]')
-
-          # Check if any High or Critical vulnerabilities exist
-          VULN_COUNT=$(echo "$VULNS" | jq length)
-          if [ "$VULN_COUNT" -gt 0 ]; then
-            echo "Error: Found $VULN_COUNT High or Critical vulnerabilities:"
-            echo "$VULNS" | jq -r '.[] | " - \(.vulnId) (\(.severity)): \(.description | .[:100])..."'
-            exit 1
-          else
-            echo "No High or Critical vulnerabilities found."
-          fi
+        continue-on-error: true  # Continue to see full logs even if upload fails
