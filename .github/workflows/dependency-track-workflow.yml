@@ -14,16 +14,18 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Set up JDK 17 for Maven
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
+      # Set up Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
+          node-version: '18' # Adjust to your project's Node.js version
 
-      # Generate CycloneDX SBOM using Maven
+      # Install dependencies and generate CycloneDX SBOM
       - name: Generate SBOM
-        run: mvn org.cyclonedx:cyclonedx-maven-plugin:2.7.11:makeAggregateBom -DoutputFormat=xml
+        run: |
+          npm ci # Install project dependencies
+          npm install -g @cyclonedx/cyclonedx-npm
+          npx cyclonedx-npm --output-format XML --output-file bom.xml
 
       # Upload SBOM to Dependency-Track
       - name: Upload SBOM to Dependency-Track
@@ -33,7 +35,7 @@ jobs:
           apiKey: ${{ secrets.DEPENDENCYTRACK_APIKEY }} # Stored in GitHub Secrets
           projectName: 'MyProject'
           projectVersion: '1.0'
-          bomFilename: 'target/bom.xml'
+          bomFilename: 'bom.xml'
           autoCreate: true
 
       # Query Dependency-Track for vulnerabilities and fail if High or Critical are found
