@@ -1,10 +1,14 @@
-name: Unified Dependency Analysis - working
+name: Unified Dependency Analysis
 
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+
+permissions:
+  issues: write
+  contents: read
 
 jobs:
   dependency-analysis:
@@ -51,41 +55,47 @@ jobs:
         with:
           project: 'dependency-check-poc'
           path: '.'
-          format: 'ALL'
+          format: 'JSON,XML'  # Explicitly include JSON for issue creation
           out: 'reports'
           args: >
             --failOnCVSS 7
             --enableRetired
             --noupdate
         env:
-          JAVA_HOME: /opt/jdk
+          JAVA_HOME: ${{ env.JAVA_HOME }}
 
-      # Step 7: Upload Dependency-Check Report
+      # Step 7: List reports directory contents
+      - name: List Reports Directory
+        if: always()
+        run: ls -la reports/
+
+      # Step 8: Upload Dependency-Check Report
       - name: Upload Dependency Check Report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dependency-check-report
           path: reports/
-        if: always()
 
-      # Step 8: Generate SBOM for Java
+      # Step 9: Generate SBOM for Java
       - name: Generate SBOM for Java
         if: steps.detect_language.outputs.language == 'java'
         id: generate_sbom_java
         run: |
-          mvn org.cyclonedx:maven-plugin:2.7.11:makeAggregateBom -DoutputFormat=xml -DoutputName=bom
+          mvn org.cyclonedx:cyclonedx-maven-plugin:2.7.11:makeAggregateBom -DoutputFormat=xml -DoutputName=bom
           echo "sbom_path=target/bom.xml" >> $GITHUB_OUTPUT
 
-      # Step 9: Generate SBOM for Node.js
+      # Step 10: Generate SBOM for Node.js
       - name: Generate SBOM for Node.js
         if: steps.detect_language.outputs.language == 'nodejs'
         id: generate_sbom_nodejs
         run: |
           npm ci
-          npx @cyclonedx/cyclonedx-npm --output-format XML --output-file bom.xml
+          npm install -g @cyclonedx/cyclonedx-npm
+          npx cyclonedx-npm --output-format XML --output-file bom.xml
           echo "sbom_path=bom.xml" >> $GITHUB_OUTPUT
 
-      # Step 10: Check if SBOM file exists
+      # Step 11: Check if SBOM file exists
       - name: Check SBOM File
         run: |
           if [ "${{ steps.detect_language.outputs.language }}" == "java" ]; then
@@ -99,7 +109,7 @@ jobs:
           ls -l $SBOM_PATH || echo "SBOM file not found"
           cat $SBOM_PATH || echo "SBOM file is empty or unreadable"
 
-      # Step 11: Upload SBOM to Dependency-Track
+      # Step 12: Upload SBOM to Dependency-Track
       - name: Upload SBOM to Dependency-Track
         run: |
           if [ "${{ steps.detect_language.outputs.language }}" == "java" ]; then
@@ -110,48 +120,124 @@ jobs:
             echo "Unknown language"
             exit 1
           fi
-          curl -X "POST" "[invalid url, do not cite] secrets.DEPENDENCYTRACK_SERVER }}/api/v1/bom" \
-          -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
-          -F "autoCreate=true" \
-          -F "projectName=MyProject" \
-          -F "projectVersion=1.0" \
-          -F "bom=@$SBOM_PATH"
+          curl -X "POST" "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/bom" \
+            -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+            -F "autoCreate=true" \
+            -F "projectName=MyProject" \
+            -F "projectVersion=1.0" \
+            -F "bom=@$SBOM_PATH"
 
-      # Step 12: Wait for SBOM processing
+      # Step 13: Wait for SBOM processing
       - name: Wait for SBOM processing
         run: sleep 30
 
-      # Step 13: Install jq for JSON parsing
+      # Step 14: Install jq for JSON parsing
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      # Step 14: Get Project UUID
+      # Step 15: Get Project UUID
       - name: Get Project UUID
         id: get_uuid
         run: |
           RESPONSE=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
-          "[invalid url, do not cite] secrets.DEPENDENCYTRACK_SERVER }}/api/v1/project/lookup?name=MyProject&version=1.0")
+            "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/project/lookup?name=MyProject&version=1.0")
           echo "Response: $RESPONSE"
-          UUID=$(echo $RESPONSE | jq -r '.uuid')
+          UUID=$(echo "$RESPONSE" | jq -r '.uuid')
           if [ -z "$UUID" ]; then
             echo "Project not found"
             exit 1
           fi
           echo "uuid=$UUID" >> $GITHUB_OUTPUT
 
-      # Step 15: Check for High or Critical Vulnerabilities
+      # Step 16: Check for High or Critical Vulnerabilities
       - name: Check Vulnerabilities
         run: |
           UUID=${{ steps.get_uuid.outputs.uuid }}
           VULNS=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
-          "[invalid url, do not cite] secrets.DEPENDENCYTRACK_SERVER }}/api/v1/vulnerability/project/$UUID" | \
-          jq '[.[] | select(.severity == "HIGH" or .severity == "CRITICAL")]')
-          COUNT=$(echo $VULNS | jq length)
-          if [ $COUNT -gt 0 ]; then
+            "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/vulnerability/project/$UUID" | \
+            jq '[.[] | select(.severity == "HIGH" or .severity == "CRITICAL")]')
+          COUNT=$(echo "$VULNS" | jq length)
+          echo "Vulnerabilities count: $COUNT"
+          if [ "$COUNT" -gt 0 ]; then
             echo "Found $COUNT high or critical vulnerabilities:"
-            echo $VULNS | jq .
+            echo "$VULNS" | jq .
             exit 1
           else
             echo "No high or critical vulnerabilities found."
           fi
+
+      # Step 17: Create GitHub Issues for Dependency-Check Vulnerabilities
+      - name: Check for Vulnerabilities and Create Issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const reportPath = '${{ github.workspace }}/reports/dependency-check-report.json';
+            console.log(`Attempting to read report at: ${reportPath}`);
+            if (!fs.existsSync(reportPath)) {
+              console.log('No JSON report found, skipping issue creation.');
+              return;
+            }
+            const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+            const vulnerabilities = report.dependencies
+              .filter(dep => dep.vulnerabilities && dep.vulnerabilities.length > 0)
+              .map(dep => {
+                const criticalVulns = dep.vulnerabilities.filter(v => {
+                  let score = -1;
+                  if (v.cvssv3 && v.cvssv3.baseScore) {
+                    score = v.cvssv3.baseScore;
+                  } else if (v.cvssv2 && v.cvssv2.score && v.cvssv2.score !== -1.0) {
+                    score = v.cvssv2.score;
+                  }
+                  return score >= 7;
+                });
+                if (criticalVulns.length > 0) {
+                  let libraryName = 'Unknown';
+                  if (dep.packages && dep.packages.length > 0) {
+                    const packageId = dep.packages[0].id;
+                    libraryName = packageId.split('@')[0].replace('pkg:gem/', '').replace('pkg:npm/', '');
+                  }
+                  const workspace = '${{ github.workspace }}';
+                  let filePath = dep.filePath || 'Unknown';
+                  if (filePath.startsWith(workspace)) {
+                    filePath = filePath.substring(workspace.length + 1);
+                  }
+                  const vulnDetails = criticalVulns.map(v => {
+                    let score = 'Unknown';
+                    if (v.cvssv3 && v.cvssv3.baseScore) {
+                      score = v.cvssv3.baseScore;
+                    } else if (v.cvssv2 && v.cvssv2.score) {
+                      score = v.cvssv2.score;
+                    }
+                    return `${v.name} (CVSS: ${score})`;
+                  });
+                  return {
+                    filePath: filePath,
+                    libraryName: libraryName,
+                    vulns: vulnDetails
+                  };
+                }
+                return null;
+              })
+              .filter(dep => dep !== null);
+            if (vulnerabilities.length > 0) {
+              const issueBody = `
+              ## Vulnerabilities Detected
+
+              The Dependency-Check has identified the following vulnerabilities with CVSS >= 7:
+
+              ${vulnerabilities.map(v => `File: ${v.filePath}\n**Library Name:** ${v.libraryName}\n${v.vulns.join('\n')}\n\n`).join('\n')}
+              Please review the attached full report and take appropriate action.
+              `;
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Critical Vulnerabilities Detected by Dependency-Check',
+                body: issueBody,
+                assignees: [context.actor]
+              });
+            } else {
+              console.log('No vulnerabilities with CVSS >= 7 found.');
+            }
 ```
