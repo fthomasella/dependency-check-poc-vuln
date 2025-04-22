@@ -1,0 +1,51 @@
+name: Dependency Track Scan
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  dtrack-scan:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Generate CycloneDX SBOM (Node.js)
+      run: |
+        npm install -g @cyclonedx/bom
+        cyclonedx-bom -o bom.xml
+
+    - name: Upload SBOM to Dependency-Track
+      run: |
+        curl -X POST "${{ secrets.DTRACK_BASE_URL }}/api/v1/bom" \
+          -H "X-Api-Key: ${{ secrets.DTRACK_API_KEY }}" \
+          -F "project=${{ secrets.DTRACK_PROJECT_UUID }}" \
+          -F "autoCreate=true" \
+          -F "bom=@bom.xml"
+
+    - name: Wait for analysis
+      run: sleep 30 # wait for DTrack to process the BOM
+
+    - name: Check for High/Critical Vulnerabilities
+      run: |
+        RESPONSE=$(curl -s -H "X-Api-Key: ${{ secrets.DTRACK_API_KEY }}" \
+          "${{ secrets.DTRACK_BASE_URL }}/api/v1/project/${{ secrets.DTRACK_PROJECT_UUID }}/metrics/current")
+
+        echo "Metrics response: $RESPONSE"
+
+        HIGH=$(echo "$RESPONSE" | jq '.vulnerabilities.high')
+        CRITICAL=$(echo "$RESPONSE" | jq '.vulnerabilities.critical')
+
+        echo "High: $HIGH, Critical: $CRITICAL"
+
+        if [ "$HIGH" -gt 0 ] || [ "$CRITICAL" -gt 0 ]; then
+          echo "❌ High or Critical vulnerabilities found!"
+          exit 1
+        else
+          echo "✅ No high or critical vulnerabilities found."
+        fi
+
+    - name: Done
+      run: echo "Scan complete"
