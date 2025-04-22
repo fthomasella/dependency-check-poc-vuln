@@ -1,0 +1,129 @@
+name: Unified Dependency Security Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  unified-security-check:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          npm install -g @cyclonedx/cyclonedx-npm
+          npx cyclonedx-npm --output-format XML --output-file bom.xml
+
+      - name: Upload SBOM to Dependency-Track
+        run: |
+          curl -X POST "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/bom" \
+          -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          -F "autoCreate=true" \
+          -F "projectName=MyProject" \
+          -F "projectVersion=1.0" \
+          -F "bom=@bom.xml"
+
+      - name: Wait for Dependency-Track Processing
+        run: sleep 30
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Get Project UUID
+        id: get_uuid
+        run: |
+          UUID=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/project/lookup?name=MyProject&version=1.0" | jq -r '.uuid')
+          if [ -z "$UUID" ]; then
+            echo "Project not found"
+            exit 1
+          fi
+          echo "uuid=$UUID" >> $GITHUB_OUTPUT
+
+      - name: Check Dependency-Track for High or Critical Vulnerabilities
+        id: check_vulns
+        run: |
+          VULNS=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/vulnerability/project/${{ steps.get_uuid.outputs.uuid }}" | \
+          jq '[.[] | select(.severity == "HIGH" or .severity == "CRITICAL")]')
+
+          COUNT=$(echo $VULNS | jq length)
+          echo "Vulnerabilities count: $COUNT"
+
+          if [ "$COUNT" -gt 0 ]; then
+            echo "Found high/critical vulnerabilities"
+            echo "vulnerabilities=$VULNS" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "No high or critical vulnerabilities found"
+          fi
+
+      - name: Set up JDK for Dependency-Check
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+
+      - name: Run OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        id: depcheck
+        with:
+          project: 'Unified-Dependency-Check'
+          path: '.'
+          format: 'ALL'
+          out: 'reports'
+          args: --failOnCVSS 7 --enableRetired --noupdate
+
+      - name: Upload Dependency Check Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-report
+          path: ${{ github.workspace }}/reports
+
+      - name: Open GitHub Issue on Vulnerabilities
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('${{ github.workspace }}/reports/dependency-check-report.json', 'utf8'));
+            const vulnerabilities = report.dependencies
+              .filter(dep => dep.vulnerabilities && dep.vulnerabilities.some(v => v.cvssv3?.baseScore >= 7 || v.cvssv2?.score >= 7));
+
+            let issueBody = '## Critical/High Vulnerabilities Detected\n\n';
+            vulnerabilities.forEach(dep => {
+              issueBody += `**Dependency:** ${dep.fileName}\n`;
+              dep.vulnerabilities.forEach(vuln => {
+                const score = vuln.cvssv3?.baseScore || vuln.cvssv2?.score;
+                if(score >= 7){
+                  issueBody += `- ${vuln.name} (CVSS: ${score})\n`;
+                }
+              });
+              issueBody += '\n';
+            });
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Critical/High Vulnerabilities Found by Unified Dependency Check',
+              body: issueBody,
+              assignees: [context.actor]
+            });
