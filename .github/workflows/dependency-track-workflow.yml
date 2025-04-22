@@ -45,18 +45,7 @@ jobs:
           ls -l bom.xml || echo "BOM file not found"
           cat bom.xml || echo "BOM file is empty or unreadable"
 
-      # Step 7: Upload SBOM to Dependency-Track with continue-on-error
-     # - name: Upload SBOM to Dependency-Track
-     #   uses: DependencyTrack/gh-upload-sbom@v3
-     #   with:
-     #     serverHostname: ${{ secrets.DEPENDENCYTRACK_SERVER }}  # Ngrok URL (e.g., abc123.ngrok.io)
-     #     apiKey: ${{ secrets.DEPENDENCYTRACK_APIKEY }}  # Stored in GitHub Secrets
-     #     projectName: 'MyProject'  # Replace with your project name
-     #     projectVersion: '1.0'  # Replace with your project version
-     #     bomFilename: 'bom.xml'
-     #     autoCreate: true
-     #   continue-on-error: true  # Continue to see full logs even if upload fails
-
+      # Step 7: Upload SBOM with curl
       - name: Upload SBOM with curl
         run: |
           curl -X "POST" "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/bom" \
@@ -65,3 +54,41 @@ jobs:
           -F "projectName=MyProject" \
           -F "projectVersion=1.0" \
           -F "bom=@bom.xml"
+
+      # Step 8: Wait for SBOM processing
+      - name: Wait for SBOM processing
+        run: sleep 30
+
+      # Step 9: Install jq for JSON parsing
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      # Step 10: Get project UUID
+      - name: Get Project UUID
+        id: get_uuid
+        run: |
+          RESPONSE=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/project/lookup?name=MyProject&version=1.0")
+          echo "Response: $RESPONSE"
+          UUID=$(echo $RESPONSE | jq -r '.uuid')
+          if [ -z "$UUID" ]; then
+            echo "Project not found"
+            exit 1
+          fi
+          echo "uuid=$UUID" >> $GITHUB_OUTPUT
+
+      # Step 11: Check for high or critical vulnerabilities
+      - name: Check Vulnerabilities
+        run: |
+          UUID=${{ steps.get_uuid.outputs.uuid }}
+          VULNS=$(curl -s -H "X-Api-Key: ${{ secrets.DEPENDENCYTRACK_APIKEY }}" \
+          "https://${{ secrets.DEPENDENCYTRACK_SERVER }}/api/v1/vulnerability/project/$UUID" | \
+          jq '[.[] | select(.severity == "HIGH" or .severity == "CRITICAL")]')
+          COUNT=$(echo $VULNS | jq length)
+          if [ $COUNT -gt 0 ]; then
+            echo "Found $COUNT high or critical vulnerabilities:"
+            echo $VULNS | jq .
+            exit 1
+          else
+            echo "No high or critical vulnerabilities found."
+          fi
