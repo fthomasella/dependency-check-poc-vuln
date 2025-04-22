@@ -84,6 +84,6 @@ jobs:
         if: always()
         with:
           # Caminho para o arquivo SARIF gerado no passo anterior
-          sarif_file: ${{ github.workspace }}/reports/results.sarif 
+          sarif_file: ${{ github.workspace }}/results.sarif 
           # Categoria opcional para organizar os alertas na aba Security
           category: osv-scanner-go-install
